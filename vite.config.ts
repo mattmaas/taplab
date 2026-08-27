@@ -1,14 +1,10 @@
 import { defineConfig } from 'vite';
-import { resolve } from 'path';
 
 export default defineConfig({
-  resolve: {
-    alias: {
-      '@': resolve(__dirname, 'src'),
-    },
-  },
   server: {
-    // Web Bluetooth requires secure context (HTTPS or localhost)
+    // Web Bluetooth requires a secure context: localhost qualifies.
+    // NOTE: do not add --host / network exposure until phone testing —
+    // and that will need HTTPS (@vitejs/plugin-basic-ssl) for Web Bluetooth.
     port: 5173,
   },
 });

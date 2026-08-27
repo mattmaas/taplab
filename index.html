@@ -13,6 +13,7 @@
         --muted: #8b98ab;
         --accent: #4cc2ff;
         --ok: #4ad991;
+        --warn: #ffc866;
         --bad: #ff6b6b;
       }
       * { box-sizing: border-box; }
@@ -51,7 +52,10 @@
       button:hover { border-color: var(--accent); }
       #conn-status { margin-left: auto; font-size: 13px; }
       #conn-status.ok { color: var(--ok); }
+      #conn-status.warn { color: var(--warn); }
       #conn-status.bad { color: var(--bad); }
+      .mode-badge { font-size: 12px; color: var(--muted); }
+      .mode-badge span { color: var(--accent); }
       #stream {
         height: 320px;
         overflow-y: auto;
@@ -91,9 +95,10 @@
       <section class="panel">
         <h2>Connection</h2>
         <div class="controls">
-          <button id="btn-connect">Connect Bluetooth</button>
+          <button id="btn-connect" title="Links to a real Tap over BLE, but the data decoder is not implemented yet — no taps will stream.">Connect BT (experimental)</button>
           <button id="btn-simulate">Simulate</button>
           <button id="btn-stop">Stop</button>
+          <span class="mode-badge">mode: <span id="session-mode">freerun</span></span>
           <span id="conn-status" class="bad">disconnected</span>
         </div>
         <div id="stream"></div>
@@ -109,7 +114,7 @@
           </div>
         </section>
         <section class="panel" style="margin-top: 12px;">
-          <h2>Weak chords</h2>
+          <h2>Weak chords <span style="text-transform:none;letter-spacing:0;">(drill mode)</span></h2>
           <div id="weak-chords"><div class="weak-none">No weak chords yet.</div></div>
         </section>
       </aside>

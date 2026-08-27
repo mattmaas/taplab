@@ -1,13 +1,18 @@
 /**
  * TapLab entry point.
  * Wires connection -> session/remap -> DOM rendering.
+ *
+ * Mode semantics (P1 review fix):
+ *   - Free-run: throughput only (chords, WPM, inter-tap). Accuracy and
+ *     weak chords show placeholders — free-run cannot judge correctness.
+ *   - Drill (coming next): prompted chords, judged taps, real accuracy.
  */
 
 import { TapConnection } from './connection/tap-connection';
 import { TelemetrySession } from './telemetry/session';
 import { RemapEngine } from './engine/remap';
 import { codeToFingerString } from './core/chords';
-import type { TapEvent, ChordStat } from './core/types';
+import type { TapEvent, ChordStat, ConnectedDetail } from './core/types';
 
 function getEl<T extends HTMLElement>(id: string): T {
   const el = document.getElementById(id) as T | null;
@@ -26,17 +31,34 @@ const statAcc = getEl<HTMLSpanElement>('stat-accuracy');
 const statWpm = getEl<HTMLSpanElement>('stat-wpm');
 const statCount = getEl<HTMLSpanElement>('stat-count');
 const statInter = getEl<HTMLSpanElement>('stat-inter');
+const modeEl = getEl<HTMLSpanElement>('session-mode');
 const connectBtn = getEl<HTMLButtonElement>('btn-connect');
 const simulateBtn = getEl<HTMLButtonElement>('btn-simulate');
 const stopBtn = getEl<HTMLButtonElement>('btn-stop');
 
-session.start();
+const FREERUN_ACCURACY_HINT = 'drill mode only';
+const FREERUN_WEAK_HINT =
+  'Run a drill to measure accuracy — free-run cannot distinguish an unmapped chord from a missed one.';
 
-connection.addEventListener('connected', () => {
-  const mode = connection.getState() === 'simulating' ? 'simulate' : 'bluetooth';
-  statusEl.textContent = `connected (${mode})`;
-  statusEl.className = 'ok';
-  session.start();
+session.start('freerun');
+renderMode();
+renderWeak();
+
+connection.addEventListener('connected', (ev) => {
+  const { detail } = ev as CustomEvent<ConnectedDetail>;
+  if (detail.dataReady) {
+    statusEl.textContent = `connected (${detail.source})`;
+    statusEl.className = 'ok';
+  } else {
+    // BLE link is up but the decoder isn't implemented — say so plainly.
+    statusEl.textContent =
+      'BT linked — decoder not implemented yet, no taps will stream. Use Simulate.';
+    statusEl.className = 'warn';
+  }
+  session.start(session.getMode());
+  renderMode();
+  renderStats();
+  renderWeak();
 });
 
 connection.addEventListener('disconnected', () => {
@@ -52,7 +74,7 @@ connection.addEventListener('tap', (ev) => {
 
 function handleTap(tap: TapEvent): void {
   const result = remap.resolve(tap.code);
-  session.recordTap(tap);
+  session.recordTap(tap); // free-run: throughput only, no judgment
   appendStream(tap, result.char, result.corrected);
   renderStats();
   renderWeak();
@@ -74,34 +96,52 @@ function appendStream(tap: TapEvent, char: string, corrected: boolean): void {
   streamEl.scrollTop = streamEl.scrollHeight;
 }
 
+function renderMode(): void {
+  modeEl.textContent = session.getMode();
+}
+
 function renderStats(): void {
   const s = session.getStats();
   statCount.textContent = String(s.totalChords);
-  statAcc.textContent =
-    s.totalChords === 0 ? '--' : `${(s.accuracy * 100).toFixed(1)}%`;
-  statWpm.textContent = s.totalChords === 0 ? '--' : s.wpm.toFixed(1);
+
+  // Accuracy: null means "not judged" (free-run, or drill with no taps yet).
+  if (s.accuracy === null) {
+    statAcc.textContent = '—';
+    statAcc.title = s.mode === 'freerun' ? FREERUN_ACCURACY_HINT : 'no judged taps yet';
+  } else {
+    statAcc.textContent = `${(s.accuracy * 100).toFixed(1)}%`;
+    statAcc.title = '';
+  }
+
+  // WPM: hidden until the sample is statistically meaningful (P2 fix).
+  statWpm.textContent = s.wpmReady ? s.wpm.toFixed(1) : '—';
+  statWpm.title = s.wpmReady ? '' : 'needs ≥10 chords and ≥15s';
+
   statInter.textContent =
-    s.totalChords <= 1 ? '--' : `${s.avgInterTapMs.toFixed(0)} ms`;
+    s.totalChords <= 1 ? '—' : `${s.avgInterTapMs.toFixed(0)} ms`;
 }
 
 function renderWeak(): void {
-  const weak: ChordStat[] = session.getWeakChords(1.0); // everything below 100%
+  const weak: ChordStat[] = session.getWeakChords();
+  weakEl.innerHTML = '';
   if (weak.length === 0) {
-    weakEl.innerHTML = '';
     const none = document.createElement('div');
     none.className = 'weak-none';
-    none.textContent = 'No weak chords yet.';
+    none.textContent =
+      session.getMode() === 'freerun'
+        ? FREERUN_WEAK_HINT
+        : 'No weak chords detected yet (needs ≥5 attempts per chord).';
     weakEl.appendChild(none);
     return;
   }
-  weakEl.innerHTML = '';
   for (const chord of weak.slice(0, 10)) {
     const row = document.createElement('div');
     row.className = 'weak-row';
     const label = document.createElement('span');
     label.textContent = `code ${chord.code} (${codeToFingerString(chord.code)})`;
     const pct = document.createElement('span');
-    pct.textContent = `${(chord.accuracy * 100).toFixed(0)}%`;
+    pct.textContent =
+      chord.accuracy === null ? '—' : `${(chord.accuracy * 100).toFixed(0)}%`;
     row.appendChild(label);
     row.appendChild(pct);
     weakEl.appendChild(row);
