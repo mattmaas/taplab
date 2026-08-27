@@ -82,6 +82,30 @@
       }
       #weak-chords .weak-row span:last-child { color: var(--bad); }
       .weak-none { color: var(--muted); font-size: 12px; }
+      .stream-line.miss { color: var(--bad); }
+      /* ----- drill panel ----- */
+      #drill-stage { text-align: center; padding: 8px 0 4px; }
+      #drill-progress { font-size: 12px; color: var(--muted); min-height: 16px; }
+      #drill-fingers { display: flex; justify-content: center; gap: 14px; margin: 12px 0 4px; }
+      .finger-wrap { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+      .finger {
+        width: 34px; height: 34px; border-radius: 50%;
+        border: 2px solid var(--border);
+        background: var(--bg);
+        transition: background 0.1s, border-color 0.1s;
+      }
+      .finger.active { background: var(--accent); border-color: var(--accent); }
+      .finger-label { font-size: 11px; color: var(--muted); }
+      #drill-letter { font-size: 34px; min-height: 44px; color: var(--text); }
+      .feedback { min-height: 20px; font-size: 14px; }
+      .feedback.ok { color: var(--ok); }
+      .feedback.bad { color: var(--bad); }
+      #drill-summary { min-height: 18px; font-size: 13px; color: var(--accent); margin-top: 6px; }
+      .drill-config { display: flex; align-items: center; gap: 12px; font-size: 12px; color: var(--muted); }
+      .drill-config input[type="number"] {
+        width: 56px; background: var(--bg); color: var(--text);
+        border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; font: inherit;
+      }
       @media (max-width: 800px) {
         main { grid-template-columns: 1fr; }
       }
@@ -118,6 +142,25 @@
           <div id="weak-chords"><div class="weak-none">No weak chords yet.</div></div>
         </section>
       </aside>
+      <section class="panel" style="grid-column: 1 / -1;">
+        <h2>Drill</h2>
+        <div class="controls">
+          <div class="drill-config">
+            <label>prompts <input id="drill-count" type="number" value="20" min="5" max="100" /></label>
+            <label title="Answers prompts with synthetic taps: 80% correct, errors are Hamming-1 finger slips. For testing without hardware."><input id="drill-autotap" type="checkbox" /> auto-tap (sim)</label>
+          </div>
+          <button id="btn-drill-start">Start drill</button>
+          <button id="btn-drill-weak" disabled title="Generate a drill weighted toward your weak chords">Drill weak chords</button>
+          <button id="btn-drill-stop" disabled>Stop drill</button>
+        </div>
+        <div id="drill-stage">
+          <div id="drill-progress"></div>
+          <div id="drill-fingers"></div>
+          <div id="drill-letter"></div>
+          <div id="drill-feedback" class="feedback"></div>
+          <div id="drill-summary"></div>
+        </div>
+      </section>
     </main>
     <script type="module" src="/src/main.ts"></script>
   </body>

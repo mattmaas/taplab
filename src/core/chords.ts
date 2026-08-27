@@ -14,6 +14,11 @@ export type TapCode = number; // 1-31
 export const FINGER_NAMES = ['Thumb', 'Index', 'Middle', 'Ring', 'Pinky'] as const;
 export type FingerName = (typeof FINGER_NAMES)[number];
 
+/** Every valid tapcode, 1..31. */
+export const ALL_CODES: readonly TapCode[] = Object.freeze(
+  Array.from({ length: 31 }, (_, i) => i + 1),
+);
+
 /** Which fingers participate in a tapcode, in finger order. */
 export function getFingers(code: TapCode): FingerName[] {
   return FINGER_NAMES.filter((_, i) => ((code >> i) & 1) === 1);

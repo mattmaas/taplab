@@ -82,6 +82,29 @@ export interface DrillConfig {
   totalPrompts: number;
 }
 
+/** Outcome of a single drill prompt. */
+export interface DrillPromptResult {
+  expected: number;
+  actual: number;
+  correct: boolean;
+  /**
+   * Prompt-shown -> tap-received latency. This is the drill-specific
+   * metric (NOT inter-tap time): it measures recall + execution.
+   */
+  promptLatencyMs: number;
+}
+
+/** Final report for a completed (or aborted) drill run. */
+export interface DrillSummary {
+  total: number; // prompts answered
+  planned: number; // prompts in the sequence
+  correct: number;
+  accuracy: number | null; // null if nothing was answered
+  avgPromptLatencyMs: number;
+  results: DrillPromptResult[];
+  aborted: boolean;
+}
+
 export type ConnectionState =
   | 'disconnected'
   | 'connecting'
