@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>TapLab - Tap Strap 2 Telemetry</title>
+    <style>
+      :root {
+        --bg: #0e1116;
+        --panel: #161b22;
+        --border: #232a35;
+        --text: #e6e9ee;
+        --muted: #8b98ab;
+        --accent: #4cc2ff;
+        --ok: #4ad991;
+        --bad: #ff6b6b;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+      }
+      header { padding: 16px 20px; border-bottom: 1px solid var(--border); }
+      h1 { font-size: 18px; margin: 0; }
+      h1 span { color: var(--muted); font-weight: normal; }
+      main {
+        display: grid;
+        grid-template-columns: 2fr 1fr;
+        gap: 16px;
+        padding: 16px 20px;
+      }
+      .panel {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 14px;
+      }
+      .panel h2 { margin: 0 0 10px; font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+      .controls { display: flex; gap: 8px; margin-bottom: 10px; }
+      button {
+        background: var(--border);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 6px 12px;
+        font: inherit;
+        cursor: pointer;
+      }
+      button:hover { border-color: var(--accent); }
+      #conn-status { margin-left: auto; font-size: 13px; }
+      #conn-status.ok { color: var(--ok); }
+      #conn-status.bad { color: var(--bad); }
+      #stream {
+        height: 320px;
+        overflow-y: auto;
+        font-size: 12px;
+        line-height: 1.5;
+        white-space: pre;
+      }
+      .stream-line { padding: 1px 0; }
+      .stats-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-bottom: 8px;
+      }
+      .stat { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 8px; }
+      .stat .label { font-size: 11px; color: var(--muted); }
+      .stat .value { font-size: 18px; }
+      #weak-chords .weak-row {
+        display: flex;
+        justify-content: space-between;
+        font-size: 12px;
+        padding: 4px 0;
+        border-bottom: 1px dashed var(--border);
+      }
+      #weak-chords .weak-row span:last-child { color: var(--bad); }
+      .weak-none { color: var(--muted); font-size: 12px; }
+      @media (max-width: 800px) {
+        main { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>TapLab <span>Tap Strap 2 telemetry & training</span></h1>
+    </header>
+    <main>
+      <section class="panel">
+        <h2>Connection</h2>
+        <div class="controls">
+          <button id="btn-connect">Connect Bluetooth</button>
+          <button id="btn-simulate">Simulate</button>
+          <button id="btn-stop">Stop</button>
+          <span id="conn-status" class="bad">disconnected</span>
+        </div>
+        <div id="stream"></div>
+      </section>
+      <aside>
+        <section class="panel">
+          <h2>Stats</h2>
+          <div class="stats-grid">
+            <div class="stat"><div class="label">Chords</div><div class="value" id="stat-count">0</div></div>
+            <div class="stat"><div class="label">Accuracy</div><div class="value" id="stat-accuracy">--</div></div>
+            <div class="stat"><div class="label">WPM</div><div class="value" id="stat-wpm">--</div></div>
+            <div class="stat"><div class="label">Avg inter-tap</div><div class="value" id="stat-inter">--</div></div>
+          </div>
+        </section>
+        <section class="panel" style="margin-top: 12px;">
+          <h2>Weak chords</h2>
+          <div id="weak-chords"><div class="weak-none">No weak chords yet.</div></div>
+        </section>
+      </aside>
+    </main>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
