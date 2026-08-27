@@ -2,28 +2,27 @@
  * TapConnection — abstraction over the Tap event source.
  *
  * Two sources:
- *   - Web Bluetooth -> Tap Strap 2 (real device) — link-layer only for now
+ *   - Web Bluetooth -> Tap Strap 2 (real device, v1 protocol, LIVE decode)
  *   - Simulate mode -> tapcodes for development without hardware
  *
  * Emits events on itself (extends EventTarget):
  *   'tap'          -> CustomEvent<TapEvent>
  *   'mouse'        -> CustomEvent<TapMouseEvent>
- *   'connected'    -> CustomEvent<ConnectedDetail>  ({ source, dataReady })
+ *   'airgesture'   -> CustomEvent<number>
+ *   'connected'    -> CustomEvent<ConnectedDetail>  ({ source, dataReady, protocol, batteryLevel })
  *   'disconnected' -> Event
  *
- * HONESTY NOTE (P3 review fix): the BLE path can reach and hold a GATT
- * connection, but the Controller-mode notification decoder is NOT
- * implemented yet — a real device will produce ZERO tap events. We surface
- * that as dataReady=false on the 'connected' event so the UI can warn
- * instead of showing a green light over a dead pipe. Simulate mode is the
- * guaranteed working path today.
- *
- * BLE UUIDs come from the official tap-web-sdk source.
- *
- * Simulate supports two shapes:
- *   simulate()                        — uniform-random codes (plumbing test)
- *   simulate({ sequence: [...] })     — scripted codes, in order, for
- *                                       deterministic drill/UI testing
+ * BLE flow (ported from TapWithUs/tap-web-sdk, MIT):
+ *   1. requestDevice filtered on the Tap service UUID
+ *   2. GATT connect, probe for V2_READ_CHAR:
+ *        present -> TapXR (v2 framed protocol). NOT decoded yet: we emit
+ *        dataReady=false and say so. Tap Strap 2 is the v1 target.
+ *   3. v1: subscribe tap/mouse/air-gesture notifications
+ *   4. write Controller mode to the NUS RX characteristic so the device
+ *      streams raw tapcodes instead of typing HID text
+ *   5. re-write the mode every 10s — the device reverts on its own
+ *   6. AirMouse quirk honored: tapcodes 2/4 while in AIR_MOUSE mode are
+ *      gesture clicks, not chords — filtered out of the tap stream
  */
 
 import { getFingers } from '../core/chords';
@@ -34,28 +33,35 @@ import type {
   ConnectedDetail,
   TapSource,
 } from '../core/types';
-
-export const TAP_SERVICE_UUID = 'c3ff0001-1d8b-40fd-a56f-c7bd5d0f3370';
-export const TAP_DATA_CHARACTERISTIC_UUID = 'c3ff0003-1d8b-40fd-a56f-c7bd5d0f3370';
-
-/** Minimal structural surface of Web Bluetooth we actually use. */
-interface GattServerLike {
-  readonly connected: boolean;
-  connect(): Promise<GattServerLike>;
-  disconnect(): void;
-}
-interface BluetoothDeviceLike {
-  readonly name?: string;
-  readonly gatt?: GattServerLike;
-  addEventListener(type: string, listener: (ev: Event) => void): void;
-}
-interface BluetoothRequestOptions {
-  filters?: { namePrefix?: string }[];
-  optionalServices?: string[];
-}
-interface BluetoothLike {
-  requestDevice(options: BluetoothRequestOptions): Promise<BluetoothDeviceLike>;
-}
+import type {
+  BluetoothDeviceLike,
+  GattCharacteristicLike,
+  GattServerLike,
+  NavigatorWithBluetooth,
+} from './webbluetooth';
+import {
+  TAP_SERVICE,
+  NUS_SERVICE,
+  TAP_DATA_CHAR,
+  MOUSE_DATA_CHAR,
+  UI_CMD_CHAR,
+  AIR_GESTURE_DATA_CHAR,
+  TAP_MODE_CHAR,
+  V2_READ_CHAR,
+  DEVICE_INFORMATION_SERVICE,
+  BATTERY_SERVICE,
+  BATTERY_LEVEL_CHAR,
+  MODE_REFRESH_INTERVAL_MS,
+  MouseModes,
+  InputType,
+  controllerModeCommand,
+  inputTypeCommand,
+  vibrationCommand,
+  parseTapData,
+  parseMouseData,
+  parseAirGesture,
+  airMouseTapToGesture,
+} from './protocol';
 
 export interface SimulateOptions {
   /** Scripted tapcodes emitted in order. Omit for uniform-random codes. */
@@ -70,6 +76,11 @@ export class TapConnection extends EventTarget {
   private source: TapSource | null = null;
   private state: ConnectionState = 'disconnected';
   private btDevice: BluetoothDeviceLike | null = null;
+  private server: GattServerLike | null = null;
+  private uiCmdChar: GattCharacteristicLike | null = null;
+  private tapModeChar: GattCharacteristicLike | null = null;
+  private mouseMode: MouseModes = MouseModes.STDBY;
+  private modeRefreshTimer: number | null = null;
   private simulateTimer: number | null = null;
 
   getState(): ConnectionState {
@@ -81,39 +92,116 @@ export class TapConnection extends EventTarget {
   }
 
   /**
-   * Attempt a real Web Bluetooth connection. Throws on failure.
-   * NOTE: link-layer only — emits 'connected' with dataReady=false until
-   * the notification decoder is implemented (no tap events will flow).
+   * Connect to a real Tap over Web Bluetooth. Throws on failure.
+   * Resolves after 'connected' has been dispatched.
    */
   async connect(): Promise<void> {
-    const nav = navigator as Navigator & { bluetooth?: BluetoothLike };
+    const nav = navigator as NavigatorWithBluetooth;
     if (!nav.bluetooth) {
-      throw new Error('Web Bluetooth is unavailable in this browser. Use Simulate.');
+      throw new Error(
+        'Web Bluetooth is unavailable in this browser. Chrome/Edge/Opera on localhost or HTTPS required. Use Simulate instead.',
+      );
     }
     this.state = 'connecting';
     try {
       const device = await nav.bluetooth.requestDevice({
-        filters: [{ namePrefix: 'Tap' }, { namePrefix: 'TAP' }],
-        optionalServices: [TAP_SERVICE_UUID],
+        filters: [{ services: [TAP_SERVICE] }],
+        optionalServices: [NUS_SERVICE, DEVICE_INFORMATION_SERVICE, BATTERY_SERVICE],
       });
       this.btDevice = device;
       device.addEventListener('gattserverdisconnected', () => this.handleDisconnect());
       if (!device.gatt) throw new Error('Device exposes no GATT server');
       const server = await device.gatt.connect();
+      this.server = server;
 
-      // TODO(protocol): resolve TAP_DATA_CHARACTERISTIC_UUID, subscribe to
-      // notifications, decode Controller-mode frames -> emitTap/emitMouse,
-      // then flip dataReady to true here.
-      void server;
+      const tapService = await server.getPrimaryService(TAP_SERVICE);
+
+      // ---- protocol detection: V2_READ_CHAR present => TapXR (v2) ----
+      let isV2 = false;
+      try {
+        await tapService.getCharacteristic(V2_READ_CHAR);
+        isV2 = true;
+      } catch {
+        isV2 = false;
+      }
+
+      const batteryLevel = await this.readBatteryLevel(server);
+
+      if (isV2) {
+        // TapXR framed protocol — not decoded yet. Be honest about it.
+        this.source = 'bluetooth';
+        this.state = 'connected';
+        this.emitConnected({
+          source: 'bluetooth',
+          dataReady: false,
+          protocol: 'v2',
+          batteryLevel,
+        });
+        return;
+      }
+
+      // ---- v1 (Tap Strap 2): subscribe + switch to Controller mode ----
+      const tapDataChar = await tapService.getCharacteristic(TAP_DATA_CHAR);
+      await this.subscribe(tapDataChar, (view) => this.onTapData(view));
+
+      try {
+        const mouseChar = await tapService.getCharacteristic(MOUSE_DATA_CHAR);
+        await this.subscribe(mouseChar, (view) => this.onMouseData(view));
+      } catch {
+        console.warn('Mouse characteristic unavailable (non-fatal)');
+      }
+      try {
+        const airChar = await tapService.getCharacteristic(AIR_GESTURE_DATA_CHAR);
+        await this.subscribe(airChar, (view) => this.onAirGestureData(view));
+      } catch {
+        console.warn('Air-gesture characteristic unavailable (non-fatal)');
+      }
+      try {
+        this.uiCmdChar = await tapService.getCharacteristic(UI_CMD_CHAR);
+      } catch {
+        this.uiCmdChar = null;
+      }
+
+      // Controller mode lives on the Nordic UART service.
+      try {
+        const nus = await server.getPrimaryService(NUS_SERVICE);
+        this.tapModeChar = await nus.getCharacteristic(TAP_MODE_CHAR);
+      } catch {
+        this.tapModeChar = null;
+        console.warn(
+          'NUS service unavailable — cannot switch to Controller mode; the Tap will keep typing HID text.',
+        );
+      }
+
+      await this.writeControllerMode();
+      this.startModeRefresh();
 
       this.source = 'bluetooth';
       this.state = 'connected';
-      this.emitConnected({ source: 'bluetooth', dataReady: false });
+      this.emitConnected({
+        source: 'bluetooth',
+        dataReady: true,
+        protocol: 'v1',
+        batteryLevel,
+      });
     } catch (err) {
+      this.cleanupBt();
       this.state = 'disconnected';
-      this.btDevice = null;
       this.dispatchEvent(new Event('disconnected'));
       throw err;
+    }
+  }
+
+  /**
+   * Haptic feedback on the physical device (no-op in simulate mode).
+   * durations: ms per buzz segment, 10ms resolution, max 18 segments.
+   */
+  async sendVibration(durationsMs: number[]): Promise<void> {
+    if (!this.uiCmdChar) return;
+    try {
+      await this.uiCmdChar.writeValue(vibrationCommand(durationsMs));
+    } catch (err) {
+      console.warn('Vibration write failed:', err);
     }
   }
 
@@ -156,12 +244,12 @@ export class TapConnection extends EventTarget {
   /** Stop any active source and emit 'disconnected'. */
   stop(): void {
     this.stopSimulateTimer();
-    if (this.btDevice?.gatt?.connected) {
-      this.btDevice.gatt.disconnect();
+    this.stopModeRefresh();
+    if (this.server?.connected) {
+      this.server.disconnect();
     }
     const hadActivity = this.source !== null || this.state !== 'disconnected';
-    this.source = null;
-    this.btDevice = null;
+    this.cleanupBt();
     if (hadActivity) {
       this.state = 'disconnected';
       this.dispatchEvent(new Event('disconnected'));
@@ -170,6 +258,98 @@ export class TapConnection extends EventTarget {
 
   disconnect(): void {
     this.stop();
+  }
+
+  // ---------------------------------------------------------------- BLE internals
+
+  private async subscribe(
+    char: GattCharacteristicLike,
+    handler: (view: DataView) => void,
+  ): Promise<void> {
+    await char.startNotifications();
+    char.addEventListener('characteristicvaluechanged', (ev: Event) => {
+      const target = ev.target as GattCharacteristicLike | null;
+      const view = target?.value;
+      if (view) handler(view);
+    });
+  }
+
+  private onTapData(view: DataView): void {
+    const code = parseTapData(view);
+    // AirMouse quirk: 2/4 in AIR_MOUSE mode are clicks, not chords.
+    const gesture = airMouseTapToGesture(code, this.mouseMode);
+    if (gesture !== null) {
+      this.dispatchEvent(new CustomEvent<number>('airgesture', { detail: gesture }));
+      return;
+    }
+    if (code >= 1 && code <= 31) this.emitTap(code);
+  }
+
+  private onMouseData(view: DataView): void {
+    const parsed = parseMouseData(view);
+    if (!parsed) return;
+    const detail: TapMouseEvent = { ...parsed, timestamp: performance.now() };
+    this.dispatchEvent(new CustomEvent<TapMouseEvent>('mouse', { detail }));
+  }
+
+  private onAirGestureData(view: DataView): void {
+    const parsed = parseAirGesture(view);
+    if (parsed.kind === 'mouseModeState') {
+      this.mouseMode = parsed.mouseMode;
+      return;
+    }
+    this.dispatchEvent(
+      new CustomEvent<number>('airgesture', { detail: parsed.gesture }),
+    );
+  }
+
+  private async writeControllerMode(): Promise<void> {
+    if (!this.tapModeChar) return;
+    try {
+      await this.tapModeChar.writeValue(controllerModeCommand());
+      await this.tapModeChar.writeValue(inputTypeCommand(InputType.AUTO));
+    } catch (err) {
+      console.warn('Input-mode write failed:', err);
+    }
+  }
+
+  /**
+   * The device reverts to Text mode on its own; the official SDK re-writes
+   * the input mode every 10s. Same here — skip it and taps stop flowing.
+   */
+  private startModeRefresh(): void {
+    this.stopModeRefresh();
+    if (!this.tapModeChar) return;
+    this.modeRefreshTimer = window.setInterval(() => {
+      void this.writeControllerMode();
+    }, MODE_REFRESH_INTERVAL_MS);
+  }
+
+  private stopModeRefresh(): void {
+    if (this.modeRefreshTimer !== null) {
+      window.clearInterval(this.modeRefreshTimer);
+      this.modeRefreshTimer = null;
+    }
+  }
+
+  private async readBatteryLevel(server: GattServerLike): Promise<number | null> {
+    try {
+      const battery = await server.getPrimaryService(BATTERY_SERVICE);
+      const level = await battery.getCharacteristic(BATTERY_LEVEL_CHAR);
+      const view = await level.readValue();
+      return view.getUint8(0);
+    } catch {
+      return null;
+    }
+  }
+
+  private cleanupBt(): void {
+    this.btDevice = null;
+    this.server = null;
+    this.uiCmdChar = null;
+    this.tapModeChar = null;
+    this.mouseMode = MouseModes.STDBY;
+    this.source = null;
   }
 
   private stopSimulateTimer(): void {
@@ -181,8 +361,8 @@ export class TapConnection extends EventTarget {
 
   private handleDisconnect(): void {
     this.stopSimulateTimer();
-    this.source = null;
-    this.btDevice = null;
+    this.stopModeRefresh();
+    this.cleanupBt();
     this.state = 'disconnected';
     this.dispatchEvent(new Event('disconnected'));
   }
@@ -198,10 +378,5 @@ export class TapConnection extends EventTarget {
       fingers: [...getFingers(code)],
     };
     this.dispatchEvent(new CustomEvent<TapEvent>('tap', { detail }));
-  }
-
-  // Reserved for when the BLE decoder ships actual mouse frames.
-  private emitMouse(event: TapMouseEvent): void {
-    this.dispatchEvent(new CustomEvent<TapMouseEvent>('mouse', { detail: event }));
   }
 }

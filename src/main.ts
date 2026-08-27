@@ -79,11 +79,17 @@ updateDrillButtons();
 connection.addEventListener('connected', (ev) => {
   const { detail } = ev as CustomEvent<ConnectedDetail>;
   if (detail.dataReady) {
-    statusEl.textContent = `connected (${detail.source})`;
+    const proto = detail.protocol ? ` ${detail.protocol}` : '';
+    const battery =
+      detail.batteryLevel != null ? `, battery ${detail.batteryLevel}%` : '';
+    statusEl.textContent = `connected (${detail.source}${proto}${battery})`;
     statusEl.className = 'ok';
-  } else {
+  } else if (detail.protocol === 'v2') {
     statusEl.textContent =
-      'BT linked — decoder not implemented yet, no taps will stream. Use Simulate.';
+      'TapXR (v2) detected — decoder targets Tap Strap 2 (v1); no taps will stream yet.';
+    statusEl.className = 'warn';
+  } else {
+    statusEl.textContent = 'BT linked — no data (decoder unavailable). Use Simulate.';
     statusEl.className = 'warn';
   }
   // A (re)connect aborts any active drill and resets to a clean free-run.
@@ -303,6 +309,9 @@ function startDrill(sequence: number[]): void {
     onPrompt: renderPrompt,
     onResult: (r) => {
       flashFeedback(r);
+      // Haptic feedback on the physical device: short buzz on a miss.
+      // No-op in simulate mode or when the UI-cmd characteristic is absent.
+      if (!r.correct) void connection.sendVibration([200]);
       renderStats();
       renderWeak();
     },

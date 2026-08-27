@@ -116,10 +116,14 @@ export type TapSource = 'bluetooth' | 'simulate';
 
 /**
  * Payload for the 'connected' event. dataReady=false means the transport
- * link is up but no tap data will flow (e.g. BLE connected but the
- * notification decoder is not implemented yet).
+ * link is up but no tap data will flow (e.g. TapXR v2 framed protocol,
+ * which the decoder does not speak yet — Tap Strap 2 v1 is live).
  */
 export interface ConnectedDetail {
   source: TapSource;
   dataReady: boolean;
+  /** BLE only: 'v1' = Tap Strap / Tap Strap 2, 'v2' = TapXR framed protocol. */
+  protocol?: 'v1' | 'v2';
+  /** BLE only: battery percentage read on connect, when available. */
+  batteryLevel?: number | null;
 }
