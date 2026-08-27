@@ -21,6 +21,12 @@ import {
   FINGER_NAMES,
 } from './core/chords';
 import { DrillRunner, generateDrill, buildWeakChordDrill } from './trainer/drill';
+import {
+  saveSession,
+  mergeResults,
+  loadLifetimeStats,
+  getLifetimeWeakChords,
+} from './telemetry/storage';
 import type {
   TapEvent,
   ChordStat,
@@ -322,6 +328,13 @@ function startDrill(sequence: number[]): void {
       renderStats();
       renderWeak(); // session stays in drill mode: weak chords feed next drill
       updateDrillButtons();
+      // Persist to IndexedDB (fire-and-forget; failure is non-fatal)
+      void saveSession(s, s.results).catch((err) =>
+        console.warn('Session save failed:', err),
+      );
+      void mergeResults(s.results).catch((err) =>
+        console.warn('Lifetime merge failed:', err),
+      );
     },
   });
   runner.start();
@@ -345,15 +358,56 @@ drillStartBtn.addEventListener('click', () => {
 });
 
 drillWeakBtn.addEventListener('click', () => {
-  const weak = session.getWeakChords();
-  if (weak.length === 0) return;
-  const sequence = buildWeakChordDrill(
-    weak,
-    ALL_CODES,
-    drillPromptCount(),
-    session.getStats().perChordStats,
-  );
-  startDrill(sequence);
+  // Merge current-session weak chords with lifetime weak chords for better
+  // drill generation — a chord you've historically struggled with stays
+  // in the drill even if this particular session didn't exercise it.
+  void (async () => {
+    let weak = session.getWeakChords();
+    try {
+      const lifetimeWeak = await getLifetimeWeakChords();
+      // Combine: session-level weak + lifetime-weak (deduplicated by code)
+      const codes = new Set(weak.map((w) => w.code));
+      for (const lw of lifetimeWeak) {
+        if (!codes.has(lw.code)) {
+          weak.push({
+            code: lw.code,
+            attempts: lw.totalAttempts,
+            correct: lw.totalCorrect,
+            accuracy: lw.accuracy,
+            avgLatencyMs: lw.avgPromptLatencyMs,
+            latencySamples: lw.latencySamples,
+            recentErrors: [],
+            lastSeen: lw.lastDrilled,
+          });
+        }
+      }
+    } catch {
+      // Lifetime stats unavailable — fall back to session-only
+    }
+    if (weak.length === 0) return;
+    let stats: Map<number, import('./core/types').ChordStat> | undefined;
+    try {
+      const lifetime = await loadLifetimeStats();
+      // Convert lifetime stats to ChordStat shape for weighting
+      stats = new Map();
+      for (const [code, ls] of lifetime) {
+        stats.set(code, {
+          code,
+          attempts: ls.totalAttempts,
+          correct: ls.totalCorrect,
+          accuracy: ls.accuracy,
+          avgLatencyMs: ls.avgPromptLatencyMs,
+          latencySamples: ls.latencySamples,
+          recentErrors: [],
+          lastSeen: ls.lastDrilled,
+        });
+      }
+    } catch {
+      stats = session.getStats().perChordStats;
+    }
+    const sequence = buildWeakChordDrill(weak, ALL_CODES, drillPromptCount(), stats);
+    startDrill(sequence);
+  })();
 });
 
 drillStopBtn.addEventListener('click', () => {

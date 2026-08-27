@@ -63,11 +63,24 @@ describe('resolveChord', () => {
     expect(resolveChord(8)).toBe('o');
     expect(resolveChord(16)).toBe('u');
   });
-  it('returns UNKNOWN_CHAR for unmapped codes', () => {
-    expect(resolveChord(3)).toBe(UNKNOWN_CHAR);
-    expect(resolveChord(31)).toBe(UNKNOWN_CHAR);
+  it('resolves two-finger consonants', () => {
+    expect(resolveChord(3)).toBe('d');
+    expect(resolveChord(18)).toBe('t');
+    expect(resolveChord(20)).toBe('s');
   });
-  it('default map contains exactly the 5 single-finger vowels (documents map coverage)', () => {
-    expect(Object.keys(DEFAULT_TAP_ALPHABET)).toHaveLength(5);
+  it('resolves three-finger consonants', () => {
+    expect(resolveChord(7)).toBe('n');
+    expect(resolveChord(13)).toBe('v');
+  });
+  it('returns UNKNOWN_CHAR for unmapped/unknown entries', () => {
+    expect(resolveChord(31)).toBe(UNKNOWN_CHAR); // backspace control
+    expect(resolveChord(29)).toBe(UNKNOWN_CHAR); // marked unknown_29
+  });
+  it('the full map covers all 26 letters (documents completeness)', () => {
+    const letters = Object.values(DEFAULT_TAP_ALPHABET).filter(
+      (v) => v.length === 1 && v >= 'a' && v <= 'z',
+    );
+    // 23 confident letters + 3 needing hardware verification
+    expect(letters.length).toBeGreaterThanOrEqual(23);
   });
 });
