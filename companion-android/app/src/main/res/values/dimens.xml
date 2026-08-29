@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="space_xs">4dp</dimen>
+    <dimen name="space_sm">8dp</dimen>
+    <dimen name="space_md">16dp</dimen>
+    <dimen name="space_lg">24dp</dimen>
+    <dimen name="space_xl">32dp</dimen>
+
+    <dimen name="card_corner">18dp</dimen>
+    <dimen name="card_elevation">0dp</dimen>
+    <dimen name="card_margin">10dp</dimen>
+    <dimen name="card_padding">18dp</dimen>
+
+    <dimen name="log_min_height">220dp</dimen>
+    <dimen name="status_dot">10dp</dimen>
+</resources>

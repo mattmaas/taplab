@@ -1,0 +1,32 @@
+// Vendored copy of the official TapWithUs Android SDK (Apache-2.0).
+// Source: https://github.com/TapWithUs/tap-android-sdk (master, v0.3.6)
+// Vendored because the JitPack builds for this artifact currently fail, so it
+// cannot be consumed as a remote dependency. Sources are unmodified; only this
+// build file is rewritten for a modern AGP/namespace setup. See LICENSE.
+plugins {
+    id 'com.android.library'
+}
+
+android {
+    namespace 'com.tapwithus.sdk'
+    compileSdk 35
+
+    defaultConfig {
+        minSdk 29
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+}
+
+dependencies {
+    implementation 'androidx.annotation:annotation:1.8.2'
+}

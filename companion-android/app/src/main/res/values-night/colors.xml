@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="tap_background">#0F1414</color>
+    <color name="tap_surface">#171D1D</color>
+    <color name="tap_surface_variant">#222A2A</color>
+    <color name="tap_on_surface">#E1E3E3</color>
+    <color name="tap_on_surface_variant">#A8B0B0</color>
+    <color name="tap_outline">#3A4444</color>
+
+    <color name="tap_on_primary">#00201B</color>
+
+    <color name="status_active">#4ADE9B</color>
+    <color name="status_inactive">#7C8585</color>
+    <color name="status_warning">#FFC44D</color>
+    <color name="status_error">#FF6B62</color>
+
+    <color name="log_background">#0A0F10</color>
+    <color name="log_text">#8FE3D5</color>
+</resources>

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Art kept inside the 72dp safe zone (18..90) -->
+    <path
+        android:fillColor="#00BFA5"
+        android:pathData="M32,44m-6,0a6,6 0,1 1,12 0a6,6 0,1 1,-12 0" />
+    <path
+        android:fillColor="#00BFA5"
+        android:pathData="M46,37m-6,0a6,6 0,1 1,12 0a6,6 0,1 1,-12 0" />
+    <path
+        android:fillColor="#00BFA5"
+        android:pathData="M62,35m-6,0a6,6 0,1 1,12 0a6,6 0,1 1,-12 0" />
+    <path
+        android:fillColor="#00BFA5"
+        android:pathData="M77,41m-6,0a6,6 0,1 1,12 0a6,6 0,1 1,-12 0" />
+    <path
+        android:fillColor="#4DD0E1"
+        android:pathData="M26,62h56a7,7 0,0 1,7 7v4a7,7 0,0 1,-7 7H26a7,7 0,0 1,-7 -7v-4a7,7 0,0 1,7 -7z" />
+</vector>
