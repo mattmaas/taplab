@@ -106,6 +106,91 @@
         width: 56px; background: var(--bg); color: var(--text);
         border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; font: inherit;
       }
+      #tapcode-toggle.active {
+        color: var(--ok);
+        border-color: var(--ok);
+      }
+      #tapcode-pending {
+        min-width: 48px;
+        color: var(--accent);
+        font-size: 16px;
+        font-weight: bold;
+      }
+      #tapcode-output {
+        width: 100%;
+        min-height: 110px;
+        resize: vertical;
+        background: var(--bg);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 10px;
+        font: inherit;
+        line-height: 1.5;
+      }
+      .tapcode-training {
+        margin-top: 14px;
+        padding-top: 14px;
+        border-top: 1px solid var(--border);
+      }
+      .tapcode-training h3 {
+        margin: 0 0 10px;
+        color: var(--muted);
+        font-size: 12px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+      .tapcode-training select,
+      .tapcode-training input[type="number"] {
+        background: var(--bg);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 4px 6px;
+        font: inherit;
+      }
+      #tapcode-drill-count { width: 56px; }
+      #tapcode-prompt {
+        min-height: 58px;
+        margin-top: 12px;
+        text-align: center;
+        font-size: 36px;
+        white-space: pre-wrap;
+      }
+      #tapcode-hint,
+      #tapcode-drill-progress {
+        min-height: 18px;
+        color: var(--muted);
+        text-align: center;
+        font-size: 12px;
+      }
+      #tapcode-drill-stats {
+        min-height: 20px;
+        margin-top: 8px;
+        color: var(--accent);
+        font-size: 12px;
+        white-space: pre-wrap;
+      }
+      .tapcode-table {
+        width: 100%;
+        margin-top: 12px;
+        border-collapse: collapse;
+        table-layout: fixed;
+        font-size: 12px;
+        text-align: center;
+      }
+      .tapcode-table th,
+      .tapcode-table td {
+        border: 1px solid var(--border);
+        padding: 6px;
+      }
+      .tapcode-table th {
+        color: var(--accent);
+        background: var(--bg);
+      }
+      .tapcode-table .control-cell {
+        color: var(--warn);
+      }
       @media (max-width: 800px) {
         main { grid-template-columns: 1fr; }
       }
@@ -113,7 +198,7 @@
   </head>
   <body>
     <header>
-      <h1>TapLab <span>Tap Strap 2 telemetry & training</span></h1>
+      <h1>TapLab <span>Tap Strap 2 telemetry &amp; training</span></h1>
     </header>
     <main>
       <section class="panel">
@@ -142,6 +227,55 @@
           <div id="weak-chords"><div class="weak-none">No weak chords yet.</div></div>
         </section>
       </aside>
+      <section class="panel" style="grid-column: 1 / -1;">
+        <h2>Tap Code <span style="text-transform:none;letter-spacing:0;">(thumb-free input)</span></h2>
+        <div class="controls">
+          <button id="tapcode-toggle" type="button" aria-pressed="false">Enable Tap Code</button>
+          <span class="mode-badge">pending:</span>
+          <span id="tapcode-pending" aria-live="polite"></span>
+        </div>
+        <textarea id="tapcode-output" readonly aria-label="Decoded Tap Code output" placeholder="Decoded text appears here"></textarea>
+        <div class="tapcode-training">
+          <h3>Tap Code training</h3>
+          <div class="controls">
+            <label>
+              lesson
+              <select id="tapcode-lesson" aria-label="Tap Code lesson"></select>
+            </label>
+            <label>
+              prompts
+              <input id="tapcode-drill-count" type="number" value="20" min="1" max="100" />
+            </label>
+            <button id="tapcode-drill-start" type="button">Start lesson</button>
+            <button id="tapcode-drill-weak" type="button" disabled>Drill weak chars</button>
+            <button id="tapcode-drill-stop" type="button" disabled>Stop</button>
+          </div>
+          <div id="tapcode-prompt" aria-live="polite"></div>
+          <div id="tapcode-hint"></div>
+          <div id="tapcode-drill-progress"></div>
+          <div id="tapcode-drill-stats" aria-live="polite"></div>
+        </div>
+        <table class="tapcode-table" aria-label="Thumb-Free Tap Code cheat sheet">
+          <thead>
+            <tr>
+              <th scope="col">row \ col</th>
+              <th scope="col">I</th>
+              <th scope="col">M</th>
+              <th scope="col">R</th>
+              <th scope="col">P</th>
+              <th scope="col">RP</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row">I</th><td>a</td><td>b</td><td>c</td><td>d</td><td>e</td></tr>
+            <tr><th scope="row">M</th><td>f</td><td>g</td><td>h</td><td>i</td><td>j</td></tr>
+            <tr><th scope="row">R</th><td>k</td><td>l</td><td>m</td><td>n</td><td>o</td></tr>
+            <tr><th scope="row">P</th><td>p</td><td>q</td><td>r</td><td>s</td><td>t</td></tr>
+            <tr><th scope="row">RP</th><td>u</td><td>v</td><td>w</td><td>x</td><td>y</td></tr>
+            <tr class="control-cell"><th scope="row">MR</th><td>z</td><td>⌫</td><td>Enter</td><td>.</td><td>,</td></tr>
+          </tbody>
+        </table>
+      </section>
       <section class="panel" style="grid-column: 1 / -1;">
         <h2>Drill</h2>
         <div class="controls">

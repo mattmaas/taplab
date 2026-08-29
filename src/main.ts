@@ -22,6 +22,22 @@ import {
 } from './core/chords';
 import { DrillRunner, generateDrill, buildWeakChordDrill } from './trainer/drill';
 import {
+  SYMBOL_NAMES,
+  TapCodeDecoder,
+} from './tapcode/tapcode';
+import type { TapCodeEvent } from './tapcode/tapcode';
+import {
+  TAPCODE_LESSONS,
+  TapCodeDrillRunner,
+  expectedSequence,
+  generateTapCodeDrill,
+} from './tapcode/tapcode-drill';
+import type {
+  TapCodeDrillPromptResult,
+  TapCodeDrillSummary,
+  TapCodeLesson,
+} from './tapcode/tapcode-drill';
+import {
   saveSession,
   mergeResults,
   loadLifetimeStats,
@@ -45,6 +61,8 @@ const connection = new TapConnection();
 const session = new TelemetrySession();
 const remap = new RemapEngine();
 let runner: DrillRunner | null = null;
+let tapCodeDrillRunner: TapCodeDrillRunner | null = null;
+let lastTapCodeDrillRunner: TapCodeDrillRunner | null = null;
 
 // ---------------------------------------------------------------- elements
 const statusEl = getEl<HTMLSpanElement>('conn-status');
@@ -70,16 +88,35 @@ const drillLetterEl = getEl<HTMLDivElement>('drill-letter');
 const drillFeedbackEl = getEl<HTMLDivElement>('drill-feedback');
 const drillSummaryEl = getEl<HTMLDivElement>('drill-summary');
 
+const tapCodeToggleBtn = getEl<HTMLButtonElement>('tapcode-toggle');
+const tapCodeOutputEl = getEl<HTMLTextAreaElement>('tapcode-output');
+const tapCodePendingEl = getEl<HTMLSpanElement>('tapcode-pending');
+const tapCodeLessonEl = getEl<HTMLSelectElement>('tapcode-lesson');
+const tapCodeDrillCountEl = getEl<HTMLInputElement>('tapcode-drill-count');
+const tapCodeDrillStartBtn = getEl<HTMLButtonElement>('tapcode-drill-start');
+const tapCodeDrillWeakBtn = getEl<HTMLButtonElement>('tapcode-drill-weak');
+const tapCodeDrillStopBtn = getEl<HTMLButtonElement>('tapcode-drill-stop');
+const tapCodePromptEl = getEl<HTMLDivElement>('tapcode-prompt');
+const tapCodeHintEl = getEl<HTMLDivElement>('tapcode-hint');
+const tapCodeDrillProgressEl = getEl<HTMLDivElement>('tapcode-drill-progress');
+const tapCodeDrillStatsEl = getEl<HTMLDivElement>('tapcode-drill-stats');
+
+let tapCodeEnabled = false;
+let tapCodeBuffer = '';
+const tapCodeDecoder = new TapCodeDecoder(handleTapCodeEvent);
+
 const FREERUN_ACCURACY_HINT = 'drill mode only';
 const FREERUN_WEAK_HINT =
   'Run a drill to measure accuracy — free-run cannot distinguish an unmapped chord from a missed one.';
 
 // ---------------------------------------------------------------- boot
 buildFingerCircles();
+populateTapCodeLessons();
 session.start('freerun');
 renderMode();
 renderWeak();
 updateDrillButtons();
+updateTapCodeDrillButtons();
 
 // ---------------------------------------------------------------- connection
 connection.addEventListener('connected', (ev) => {
@@ -121,6 +158,11 @@ connection.addEventListener('tap', (ev) => {
 
 // ---------------------------------------------------------------- tap routing
 function routeTap(tap: TapEvent): void {
+  if (tapCodeEnabled) {
+    tapCodeDecoder.feed(tap.code);
+    return;
+  }
+
   if (runner?.isActive()) {
     // Drill mode: the runner judges, records into the session, and drives
     // prompt advancement via hooks. Stream shows judgment marks.
@@ -157,7 +199,81 @@ function appendStream(tap: TapEvent, char: string, corrected: boolean, mark = ''
 
 // ---------------------------------------------------------------- stats
 function renderMode(): void {
-  modeEl.textContent = runner?.isActive() ? 'drill' : session.getMode();
+  modeEl.textContent = tapCodeDrillRunner?.isActive()
+    ? 'tapcode-drill'
+    : tapCodeEnabled
+      ? 'tapcode'
+      : runner?.isActive()
+        ? 'drill'
+        : session.getMode();
+}
+
+function handleTapCodeEvent(event: TapCodeEvent): void {
+  switch (event.type) {
+    case 'commit':
+      if (tapCodeDrillRunner?.isActive()) {
+        tapCodeDrillRunner.feedCommittedOutput(event.text);
+        renderTapCodeDrillProgress();
+      } else {
+        tapCodeBuffer += event.text;
+        renderTapCodeOutput();
+      }
+      break;
+    case 'action':
+      if (tapCodeDrillRunner?.isActive()) {
+        tapCodeDrillRunner.feedCommittedOutput(event.action);
+        renderTapCodeDrillProgress();
+      } else {
+        if (event.action === 'backspace') {
+          tapCodeBuffer = Array.from(tapCodeBuffer).slice(0, -1).join('');
+        } else {
+          tapCodeBuffer += '\n';
+        }
+        renderTapCodeOutput();
+      }
+      break;
+    case 'pending':
+      tapCodePendingEl.textContent = event.display;
+      break;
+    case 'cancel':
+    case 'error':
+      void connection.sendVibration([200]);
+      break;
+    case 'modeToggle':
+      setTapCodeEnabled(!tapCodeEnabled);
+      break;
+  }
+}
+
+function renderTapCodeOutput(): void {
+  tapCodeOutputEl.value = tapCodeBuffer;
+  tapCodeOutputEl.scrollTop = tapCodeOutputEl.scrollHeight;
+}
+
+function setTapCodeEnabled(enabled: boolean): void {
+  if (tapCodeEnabled === enabled) return;
+
+  cancelAutoTap();
+  if (runner?.isActive()) runner.abort();
+  runner = null;
+  if (!enabled && tapCodeDrillRunner?.isActive()) {
+    tapCodeDrillRunner.stop();
+  }
+  session.start('freerun');
+
+  tapCodeEnabled = enabled;
+  tapCodeDecoder.reset();
+  tapCodeToggleBtn.textContent = enabled
+    ? 'Disable Tap Code'
+    : 'Enable Tap Code';
+  tapCodeToggleBtn.classList.toggle('active', enabled);
+  tapCodeToggleBtn.setAttribute('aria-pressed', String(enabled));
+
+  renderMode();
+  renderStats();
+  renderWeak();
+  updateDrillButtons();
+  updateTapCodeDrillButtons();
 }
 
 function renderStats(): void {
@@ -263,10 +379,176 @@ function showSummary(s: DrillSummary): void {
 
 function updateDrillButtons(): void {
   const running = runner?.isActive() ?? false;
-  drillStartBtn.disabled = running;
+  const tapCodeDrillRunning = tapCodeDrillRunner?.isActive() ?? false;
+  drillStartBtn.disabled = running || tapCodeEnabled || tapCodeDrillRunning;
   drillStopBtn.disabled = !running;
-  drillWeakBtn.disabled = running || session.getWeakChords().length === 0;
+  drillWeakBtn.disabled =
+    running ||
+    tapCodeEnabled ||
+    tapCodeDrillRunning ||
+    session.getWeakChords().length === 0;
 }
+
+// ---------------------------------------------------------------- tap code training
+function populateTapCodeLessons(): void {
+  tapCodeLessonEl.innerHTML = '';
+  for (const lesson of TAPCODE_LESSONS) {
+    const option = document.createElement('option');
+    option.value = lesson.id;
+    option.textContent = `${lesson.id} — ${lesson.name}`;
+    option.title = lesson.description;
+    tapCodeLessonEl.appendChild(option);
+  }
+}
+
+function selectedTapCodeLesson(): TapCodeLesson {
+  return (
+    TAPCODE_LESSONS.find((lesson) => lesson.id === tapCodeLessonEl.value) ??
+    TAPCODE_LESSONS[0]
+  );
+}
+
+function tapCodePromptCount(): number {
+  const count = Number.parseInt(tapCodeDrillCountEl.value, 10);
+  return Number.isFinite(count) ? Math.min(Math.max(count, 1), 100) : 20;
+}
+
+function tapCodeTargetLabel(target: string): string {
+  if (target === ' ') return 'SPACE';
+  if (target === 'backspace') return 'BACKSPACE';
+  if (target === 'enter') return 'ENTER';
+  return target;
+}
+
+function tapCodeSymbolLabel(code: number): string {
+  if (code === 6) return 'Index + Middle';
+  if (code === 12) return 'Middle + Ring';
+  return SYMBOL_NAMES[code as keyof typeof SYMBOL_NAMES] ?? String(code);
+}
+
+function renderTapCodePrompt(prompt: string, index: number, total: number): void {
+  tapCodePromptEl.textContent = tapCodeTargetLabel(prompt);
+  tapCodeHintEl.textContent = expectedSequence(prompt)
+    .map(tapCodeSymbolLabel)
+    .join(' · ');
+  tapCodeDrillProgressEl.textContent = `${index + 1} / ${total} · 0 chars`;
+}
+
+function renderTapCodeDrillProgress(): void {
+  if (!tapCodeDrillRunner?.isActive()) return;
+  const progress = tapCodeDrillRunner.getProgress();
+  tapCodeDrillProgressEl.textContent =
+    `${progress.completed + 1} / ${progress.total} · ` +
+    `${progress.charsDone} / ${progress.charsTotal} chars`;
+}
+
+function renderTapCodeResult(result: TapCodeDrillPromptResult): void {
+  const mark = result.correct ? '✓' : '✗';
+  tapCodeDrillStatsEl.textContent =
+    `${mark} ${tapCodeTargetLabel(result.prompt)} · ${result.latencyMs.toFixed(0)} ms`;
+}
+
+function renderTapCodeSummary(summary: TapCodeDrillSummary): void {
+  const accuracy =
+    summary.accuracy === null ? '—' : `${(summary.accuracy * 100).toFixed(1)}%`;
+  const stats = [...summary.perCharStats]
+    .sort((a, b) => a.accuracy - b.accuracy || b.attempts - a.attempts)
+    .map(
+      (stat) =>
+        `${tapCodeTargetLabel(stat.char)}: ${(stat.accuracy * 100).toFixed(0)}% ` +
+        `(${stat.correct}/${stat.attempts})`,
+    );
+
+  tapCodeDrillStatsEl.textContent = [
+    `${summary.correct}/${summary.promptCount} correct (${accuracy}) · ` +
+      `${summary.avgLatencyMs.toFixed(0)} ms average`,
+    ...stats,
+  ].join('\n');
+  tapCodePromptEl.textContent = '';
+  tapCodeHintEl.textContent = '';
+  tapCodeDrillProgressEl.textContent = '';
+}
+
+function updateTapCodeDrillButtons(): void {
+  const running = tapCodeDrillRunner?.isActive() ?? false;
+  tapCodeDrillStartBtn.disabled = running;
+  tapCodeDrillStopBtn.disabled = !running;
+  tapCodeLessonEl.disabled = running;
+  tapCodeDrillCountEl.disabled = running;
+  tapCodeDrillWeakBtn.disabled =
+    running || (lastTapCodeDrillRunner?.getWeakChars().length ?? 0) === 0;
+}
+
+function startTapCodeDrill(sequence: string[]): void {
+  cancelAutoTap();
+  if (runner?.isActive()) runner.abort();
+  runner = null;
+  setTapCodeEnabled(true);
+
+  tapCodeDrillStatsEl.textContent = '';
+  const drill = new TapCodeDrillRunner(sequence, {
+    onPrompt: (prompt, index, total) => {
+      renderTapCodePrompt(prompt, index, total);
+      renderTapCodeDrillProgress();
+    },
+    onResult: renderTapCodeResult,
+    onComplete: (summary) => {
+      lastTapCodeDrillRunner = drill;
+      renderTapCodeSummary(summary);
+      renderMode();
+      updateDrillButtons();
+      updateTapCodeDrillButtons();
+    },
+  });
+  tapCodeDrillRunner = drill;
+  lastTapCodeDrillRunner = drill;
+  drill.start();
+
+  renderMode();
+  updateDrillButtons();
+  updateTapCodeDrillButtons();
+}
+
+tapCodeDrillStartBtn.addEventListener('click', () => {
+  const sequence = generateTapCodeDrill(
+    selectedTapCodeLesson(),
+    tapCodePromptCount(),
+  );
+  startTapCodeDrill(sequence);
+});
+
+tapCodeDrillWeakBtn.addEventListener('click', () => {
+  const weakChars = lastTapCodeDrillRunner?.getWeakChars() ?? [];
+  if (weakChars.length === 0) {
+    tapCodeDrillStatsEl.textContent =
+      'No weak characters yet. Complete at least three attempts per character.';
+    updateTapCodeDrillButtons();
+    return;
+  }
+
+  const lesson = selectedTapCodeLesson();
+  const relevantTargets = lesson.targets.filter((target) =>
+    weakChars.some((char) =>
+      target === 'backspace' || target === 'enter'
+        ? target === char
+        : Array.from(target).includes(char),
+    ),
+  );
+  const weakLesson: TapCodeLesson = {
+    ...lesson,
+    targets: relevantTargets.length > 0 ? relevantTargets : lesson.targets,
+  };
+  startTapCodeDrill(
+    generateTapCodeDrill(weakLesson, tapCodePromptCount(), weakChars),
+  );
+});
+
+tapCodeDrillStopBtn.addEventListener('click', () => {
+  tapCodeDrillRunner?.stop();
+  renderMode();
+  updateDrillButtons();
+  updateTapCodeDrillButtons();
+});
 
 // ---------------------------------------------------------------- auto-tap sim
 // Dev affordance: answers prompts with synthetic taps (80% correct; errors
@@ -309,6 +591,9 @@ function cancelAutoTap(): void {
 
 // ---------------------------------------------------------------- drill control
 function startDrill(sequence: number[]): void {
+  if (tapCodeDrillRunner?.isActive()) tapCodeDrillRunner.stop();
+  if (tapCodeEnabled) setTapCodeEnabled(false);
+
   drillSummaryEl.textContent = '';
   drillFeedbackEl.textContent = '';
   runner = new DrillRunner(sequence, session, {
@@ -417,6 +702,10 @@ drillStopBtn.addEventListener('click', () => {
   updateDrillButtons();
 });
 
+tapCodeToggleBtn.addEventListener('click', () => {
+  setTapCodeEnabled(!tapCodeEnabled);
+});
+
 // ---------------------------------------------------------------- connection controls
 connectBtn.addEventListener('click', () => {
   void connection.connect().catch((err: unknown) => {
@@ -432,7 +721,9 @@ simulateBtn.addEventListener('click', () => {
 stopBtn.addEventListener('click', () => {
   cancelAutoTap();
   if (runner?.isActive()) runner.abort();
+  if (tapCodeDrillRunner?.isActive()) tapCodeDrillRunner.stop();
   connection.stop();
   renderMode();
   updateDrillButtons();
+  updateTapCodeDrillButtons();
 });

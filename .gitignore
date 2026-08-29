@@ -6,3 +6,10 @@ Thumbs.db
 .vite/
 .env
 .env.*
+
+# Android / Gradle
+.gradle/
+**/build/
+local.properties
+*.apk
+*.aab

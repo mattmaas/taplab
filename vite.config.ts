@@ -1,10 +1,11 @@
 import { defineConfig } from 'vite';
+import basicSsl from '@vitejs/plugin-basic-ssl';
 
 export default defineConfig({
+  plugins: [basicSsl()],
   server: {
-    // Web Bluetooth requires a secure context: localhost qualifies.
-    // NOTE: do not add --host / network exposure until phone testing —
-    // and that will need HTTPS (@vitejs/plugin-basic-ssl) for Web Bluetooth.
+    // HTTPS + LAN exposure enabled for phone / Web Bluetooth testing.
+    host: true,
     port: 5173,
   },
 });
