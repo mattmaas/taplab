@@ -25,6 +25,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tapCodeStateText: TextView
     private lateinit var logView: TextView
     private lateinit var doubleTapWindowLabel: TextView
+    private lateinit var chordDoubleTapWindowLabel: TextView
 
     private val logLines = ArrayDeque<String>()
     private var logByteCount = 0
@@ -39,6 +40,7 @@ class MainActivity : AppCompatActivity() {
         wireTapCodeControls()
         wireAirMouseSettings()
         wireTapCodeModeControls()
+        wireSurfaceMouseControls()
         wireDiagnostics()
 
         val persistedLog = DiagnosticLog.read(applicationContext)
@@ -81,6 +83,8 @@ class MainActivity : AppCompatActivity() {
         tapCodeStateText = findViewById(R.id.tapcode_state_text)
         logView = findViewById(R.id.log_view)
         doubleTapWindowLabel = findViewById(R.id.label_double_tap_window)
+        chordDoubleTapWindowLabel =
+            findViewById(R.id.label_chord_double_tap_window)
     }
 
     private fun populateStaticText() {
@@ -270,8 +274,132 @@ class MainActivity : AppCompatActivity() {
                 TapOverrideService.onSettingsChanged()
             }
         }
+
+        val chordWindowSlider =
+            findViewById<Slider>(R.id.slider_chord_double_tap_window)
+
+        findViewById<MaterialSwitch>(R.id.switch_chord_double_tap).apply {
+            isChecked = CompanionSettings.tapCodeChordDoubleTapEnabled(
+                applicationContext
+            )
+            chordWindowSlider.isEnabled = isChecked
+            setOnCheckedChangeListener { _, enabled ->
+                CompanionSettings.setTapCodeChordDoubleTapEnabled(
+                    applicationContext,
+                    enabled
+                )
+                chordWindowSlider.isEnabled = enabled
+                val behavior = if (enabled) {
+                    "chord right-click double tap enabled"
+                } else {
+                    "instant chord left click"
+                }
+                appendLog(
+                    "Setting changed: chord double tap=$enabled ($behavior)"
+                )
+                TapOverrideService.onSettingsChanged()
+            }
+        }
+
+        var persistedChordWindow =
+            CompanionSettings.tapCodeChordDoubleTapWindowMs(applicationContext)
+        renderChordDoubleTapWindowLabel(persistedChordWindow)
+
+        chordWindowSlider.apply {
+            valueFrom = CompanionSettings.MIN_DOUBLE_TAP_WINDOW_MS.toFloat()
+            valueTo = CompanionSettings.MAX_DOUBLE_TAP_WINDOW_MS.toFloat()
+            value = persistedChordWindow.toFloat()
+
+            addOnChangeListener { _, sliderValue, fromUser ->
+                if (fromUser) {
+                    renderChordDoubleTapWindowLabel(sliderValue.toLong())
+                }
+            }
+
+            addOnSliderTouchListener(
+                object : Slider.OnSliderTouchListener {
+                    override fun onStartTrackingTouch(slider: Slider) = Unit
+
+                    override fun onStopTrackingTouch(slider: Slider) {
+                        val windowMs = slider.value.toLong()
+                        if (windowMs == persistedChordWindow) return
+
+                        persistedChordWindow = windowMs
+                        CompanionSettings.setTapCodeChordDoubleTapWindowMs(
+                            applicationContext,
+                            windowMs
+                        )
+                        appendLog(
+                            "Setting changed: chord double-tap window=${windowMs}ms"
+                        )
+                        TapOverrideService.onSettingsChanged()
+                    }
+                }
+            )
+        }
     }
 
+    private fun renderChordDoubleTapWindowLabel(windowMs: Long) {
+        chordDoubleTapWindowLabel.text = "Chord double-tap window Â· ${windowMs} ms"
+    }
+
+    private fun wireSurfaceMouseControls() {
+        val indexSwitch = findViewById<MaterialSwitch>(R.id.switch_surface_index_click)
+        val middleSwitch =
+            findViewById<MaterialSwitch>(R.id.switch_surface_middle_right)
+
+        fun applyDependentState(masterEnabled: Boolean) {
+            indexSwitch.isEnabled = masterEnabled
+            middleSwitch.isEnabled = masterEnabled
+        }
+
+        findViewById<MaterialSwitch>(R.id.switch_surface_mouse_mode).apply {
+            isChecked = CompanionSettings.surfaceMouseModeEnabled(applicationContext)
+            applyDependentState(isChecked)
+            setOnCheckedChangeListener { _, enabled ->
+                CompanionSettings.setSurfaceMouseModeEnabled(
+                    applicationContext,
+                    enabled
+                )
+                applyDependentState(enabled)
+                val behavior = if (enabled) {
+                    "Multimedia reclaimed for cursor gestures"
+                } else {
+                    "native Multimedia HID preserved"
+                }
+                appendLog("Setting changed: surface-mouse mode=$enabled ($behavior)")
+                TapOverrideService.onSettingsChanged()
+            }
+        }
+
+        indexSwitch.apply {
+            isChecked = CompanionSettings.surfaceMouseIndexClickEnabled(
+                applicationContext
+            )
+            setOnCheckedChangeListener { _, enabled ->
+                CompanionSettings.setSurfaceMouseIndexClickEnabled(
+                    applicationContext,
+                    enabled
+                )
+                appendLog("Setting changed: surface-mouse index click=$enabled")
+                TapOverrideService.onSettingsChanged()
+            }
+        }
+
+        middleSwitch.apply {
+            isChecked = CompanionSettings.surfaceMouseMiddleRightClickEnabled(
+                applicationContext
+            )
+            setOnCheckedChangeListener { _, enabled ->
+                CompanionSettings.setSurfaceMouseMiddleRightClickEnabled(
+                    applicationContext,
+                    enabled
+                )
+                appendLog("Setting changed: surface-mouse middle right click=$enabled")
+                TapOverrideService.onSettingsChanged()
+            }
+        }
+    }
     private fun wireDiagnostics() {
         findViewById<MaterialButton>(R.id.btn_test_root).setOnClickListener { button ->
             button.isEnabled = false

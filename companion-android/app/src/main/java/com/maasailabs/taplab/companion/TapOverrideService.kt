@@ -16,6 +16,7 @@ import com.tapwithus.sdk.airmouse.AirMousePacket
 import com.tapwithus.sdk.mode.RawSensorData
 import com.tapwithus.sdk.mode.TapInputMode
 import com.tapwithus.sdk.mouse.MousePacket
+import java.util.concurrent.ConcurrentHashMap
 
 class TapOverrideService : Service() {
     private lateinit var sdk: TapSdk
@@ -26,6 +27,27 @@ class TapOverrideService : Service() {
     private var lastMouseProximity: Int? = null
     private var lastRawSensorLogMs = 0L
     private var suppressedRawSensorPackets = 0
+    private var lastGlideLogMs = 0L
+    private var lastMousePacketMs = 0L
+
+    // Firmware-reported Tap state per device. Mode selection and input routing
+    // both derive from this, so the two can never disagree.
+    private val tapStates = ConcurrentHashMap<String, Int>()
+
+    /** What the current Tap state and settings say raw tap input means. */
+    private enum class InputRole {
+        /** Decode Tap Code text. */
+        TAP_CODE,
+
+        /** Optical-glider cursor use: gestures only, no text. */
+        SURFACE_MOUSE,
+
+        /** AirMouse active: thumb touches arrive as AirMouse packets. */
+        AIR_MOUSE,
+
+        /** Native Multimedia/Smart TV profile owns the device. */
+        STOOD_DOWN
+    }
 
     private val tapCodeDecoder by lazy {
         TapCodeDecoder(onEvent = ::handleTapCodeEvent)
@@ -42,6 +64,9 @@ class TapOverrideService : Service() {
     private val leftClickDetector by lazy {
         DoubleTapDetector(
             name = "thumb-index",
+            windowProvider = {
+                CompanionSettings.doubleTapWindowMs(applicationContext)
+            },
             singleAction = RootInjector::clickLeft,
             doubleAction = RootInjector::clickRight
         )
@@ -49,8 +74,24 @@ class TapOverrideService : Service() {
     private val mediaDetector by lazy {
         DoubleTapDetector(
             name = "thumb-middle",
+            windowProvider = {
+                CompanionSettings.doubleTapWindowMs(applicationContext)
+            },
             singleAction = { RootInjector.keyevent(MEDIA_PLAY_PAUSE_KEYCODE) },
             doubleAction = { RootInjector.keyevent(BACK_KEYCODE) }
+        )
+    }
+
+    // Keyboard-mode chord clicks have an independent detector so their
+    // double-tap behavior and window never inherit AirMouse tuning.
+    private val chordClickDetector by lazy {
+        DoubleTapDetector(
+            name = "chord-thumb-index",
+            windowProvider = {
+                CompanionSettings.tapCodeChordDoubleTapWindowMs(applicationContext)
+            },
+            singleAction = RootInjector::clickLeft,
+            doubleAction = RootInjector::clickRight
         )
     }
 
@@ -71,9 +112,14 @@ class TapOverrideService : Service() {
             val tapCodeEnabled = isTapCodeEnabled()
             val training = isTraining()
             val airMouseEnabled = sdk.isTapInAirMouseState(tapIdentifier)
+            if (airMouseEnabled) {
+                tapStates[tapIdentifier] = AIR_MOUSE_STATE
+            }
             log(
                 "Tap connected: device=${shortDeviceId(tapIdentifier)} " +
-                    "tapCode=$tapCodeEnabled training=$training airMouse=$airMouseEnabled"
+                    "tapCode=$tapCodeEnabled training=$training " +
+                    "airMouse=$airMouseEnabled " +
+                    "state=${tapStateName(stateOf(tapIdentifier))}"
             )
 
             injectorHandler.post {
@@ -84,22 +130,15 @@ class TapOverrideService : Service() {
                 )
             }
 
-            if (decoderActive()) {
-                requestControllerWithMouseHidMode(
-                    tapIdentifier,
-                    if (training) "native trainer active" else "Tap Code enabled"
-                )
-            } else {
-                requestTextMode(tapIdentifier, "Tap Code disabled")
-                if (airMouseEnabled) {
-                    requestControllerWithMouseHidMode(tapIdentifier, "AirMouse active")
-                    log("AirMouse ON — override active")
-                }
-            }
+            // Single decision point. Previously this method issued its own
+            // unconditional controller-mode request that raced the state
+            // handler, so identical sessions could end up in different modes.
+            applyDesiredMode(tapIdentifier, "connected")
         }
 
         override fun onTapDisconnected(tapIdentifier: String) {
             lastMouseProximity = null
+            tapStates.remove(tapIdentifier)
             log("Tap disconnected: $tapIdentifier")
         }
 
@@ -119,8 +158,10 @@ class TapOverrideService : Service() {
             val tapCodeEnabled = isTapCodeEnabled()
             val training = isTraining()
             val decoderActive = decoderActive()
+            val role = inputRole(tapIdentifier)
             val modeTag = when {
                 training -> "[Trainer]"
+                role == InputRole.SURFACE_MOUSE -> "[SurfaceMouse]"
                 tapCodeEnabled -> "[TapCode]"
                 else -> "[Regular]"
             }
@@ -133,42 +174,53 @@ class TapOverrideService : Service() {
                 "$modeTag Tap input: device=${shortDeviceId(tapIdentifier)} raw=$data " +
                     "binary=${fiveBitBinary(data)} fingers=${fingerNames(data)} " +
                     "repeatData=$repeatData tapCode=$tapCodeEnabled " +
-                    "training=$training$outputDescription"
+                    "training=$training role=$role$outputDescription"
             )
             if (!decoderActive) return
 
-            if (tapCodeEnabled && !training && !sdk.isTapInAirMouseState(tapIdentifier)) {
-                when {
-                    data == THUMB_INDEX_CHORD &&
-                        CompanionSettings.tapCodeThumbIndexClickEnabled(
-                            applicationContext
-                        ) -> {
-                        log(
-                            "ACTION immediate: non-AirMouse Thumb+Index chord -> LEFT click"
-                        )
-                        injectorHandler.post { RootInjector.clickLeft() }
-                        return
-                    }
+            lastTapIdentifier = tapIdentifier
 
-                    data == THUMB_MIDDLE_CHORD &&
-                        CompanionSettings.tapCodeThumbMiddleMediaEnabled(
-                            applicationContext
-                        ) -> {
-                        log(
-                            "ACTION immediate: non-AirMouse Thumb+Middle chord -> " +
-                                "MEDIA PLAY/PAUSE"
-                        )
-                        injectorHandler.post {
-                            RootInjector.keyevent(MEDIA_PLAY_PAUSE_KEYCODE)
-                        }
-                        return
+            // A native profile owns the device: honour the stand-down instead of
+            // letting the decoder keep consuming input behind the scenes.
+            if (role == InputRole.STOOD_DOWN) {
+                log(
+                    "Input ignored (raw=$data ${fingerNames(data)}); " +
+                        "native ${tapStateName(stateOf(tapIdentifier))} profile active"
+                )
+                return
+            }
+
+            // Thumb-Free Tap Code never uses the thumb, so any chord containing
+            // it cannot be text. Claim those chords for gestures and keep them
+            // away from the decoder entirely, which also prevents the spurious
+            // "Invalid Tap Code chord" errors that incidental fingers caused.
+            if (data and TapCodeDecoder.THUMB != 0) {
+                when {
+                    training -> log(
+                        "[Trainer] Thumb chord ignored (raw=$data " +
+                            "${fingerNames(data)}); not part of the curriculum"
+                    )
+
+                    role == InputRole.AIR_MOUSE -> log(
+                        "[AirMouse] Thumb chord ignored (raw=$data " +
+                            "${fingerNames(data)}); AirMouse gesture packets " +
+                            "handle thumb touches"
+                    )
+
+                    else -> injectorHandler.post {
+                        handleThumbChordGesture(data)
                     }
                 }
+                return
+            }
+
+            if (role == InputRole.SURFACE_MOUSE) {
+                injectorHandler.post { handleSurfaceMouseTap(data) }
+                return
             }
 
             injectorHandler.post {
                 if (!decoderActive()) return@post
-                lastTapIdentifier = tapIdentifier
                 tapCodeDecoder.feed(data, System.currentTimeMillis())
             }
         }
@@ -188,6 +240,8 @@ class TapOverrideService : Service() {
             // Cursor motion emits dozens of packets per second. Counting rather
             // than logging them keeps gestures, clicks, and failures visible.
             airMouseMotionPacketCount += 1
+            val nowMs = System.currentTimeMillis()
+            lastMousePacketMs = nowMs
 
             val proximity = data.proximity.getInt()
             val previousProximity = lastMouseProximity
@@ -198,6 +252,20 @@ class TapOverrideService : Service() {
                         "new=$proximity device=${shortDeviceId(tapIdentifier)}"
                 )
                 lastMouseProximity = proximity
+            }
+
+            // Throttled heartbeat so an active glide is visible in the log.
+            // Without this, minutes of cursor use left no trace at all.
+            if (nowMs - lastGlideLogMs >= GLIDE_LOG_INTERVAL_MS) {
+                lastGlideLogMs = nowMs
+                log(
+                    "[SurfaceMouse] cursor active: device=" +
+                        "${shortDeviceId(tapIdentifier)} " +
+                        "packets=$airMouseMotionPacketCount " +
+                        "proximity=$proximity " +
+                        "state=${tapStateName(stateOf(tapIdentifier))} " +
+                        "role=${inputRole(tapIdentifier)}"
+                )
             }
         }
 
@@ -306,6 +374,7 @@ class TapOverrideService : Service() {
         override fun onTapChangedState(tapIdentifier: String, state: Int) {
             val stateName = tapStateName(state)
             lastMouseProximity = null
+            tapStates[tapIdentifier] = state
             log(
                 "[Mode] Tap state changed: device=${shortDeviceId(tapIdentifier)} " +
                     "rawState=$state state=$stateName"
@@ -313,48 +382,40 @@ class TapOverrideService : Service() {
 
             if (state != AIR_MOUSE_STATE) {
                 logAirMouseMotionSummary()
+            } else {
+                airMouseMotionPacketCount = 0
             }
 
-            when (state) {
-                AIR_MOUSE_STATE -> {
-                    airMouseMotionPacketCount = 0
-                    requestControllerWithMouseHidMode(
-                        tapIdentifier,
-                        "native profile AIRMOUSE"
-                    )
-                    log(
-                        "[Mode] Native AIRMOUSE profile active; override active " +
-                            "(cursor-motion packet logging suppressed)"
-                    )
-                }
+            leftClickDetector.cancel()
+            mediaDetector.cancel()
+            chordClickDetector.cancel()
 
-                MULTIMEDIA_STATE, SMART_TV_STATE -> {
-                    leftClickDetector.cancel()
-                    mediaDetector.cancel()
-                    requestTextMode(
-                        tapIdentifier,
-                        "native profile $stateName"
-                    )
-                    log(
-                        "[Mode] Native $stateName profile active; " +
-                            "custom gesture injection suspended"
-                    )
-                }
+            val role = inputRole(tapIdentifier)
+            applyDesiredMode(tapIdentifier, "state $stateName")
 
-                else -> {
-                    if (decoderActive()) {
-                        requestControllerWithMouseHidMode(
-                            tapIdentifier,
-                            "$stateName while decoder active"
-                        )
-                        log(
-                            "[Mode] $stateName state — Tap Code/trainer controller " +
-                                "mode retained/restored"
-                        )
-                    } else {
-                        requestTextMode(tapIdentifier, stateName)
-                        log("[Mode] $stateName state — stock keyboard retained")
-                    }
+            when (role) {
+                InputRole.SURFACE_MOUSE -> log(
+                    "[Mode] $stateName treated as surface-mouse mode; " +
+                        "cursor gestures active and Tap Code text suspended"
+                )
+
+                InputRole.STOOD_DOWN -> log(
+                    "[Mode] Native $stateName profile active; " +
+                        "custom gesture and text injection suspended"
+                )
+
+                InputRole.AIR_MOUSE -> log(
+                    "[Mode] Native AIRMOUSE profile active; override active " +
+                        "(cursor-motion packet logging throttled)"
+                )
+
+                InputRole.TAP_CODE -> if (decoderActive()) {
+                    log(
+                        "[Mode] $stateName state — Tap Code/trainer controller " +
+                            "mode retained/restored"
+                    )
+                } else {
+                    log("[Mode] $stateName state — stock keyboard retained")
                 }
             }
         }
@@ -406,7 +467,7 @@ class TapOverrideService : Service() {
                     applyTapCodeEnabled(true, force = true)
                 } else {
                     sdk.getConnectedTaps().forEach { tapIdentifier ->
-                        requestControllerWithMouseHidMode(
+                        applyDesiredMode(
                             tapIdentifier,
                             "native trainer active at service start"
                         )
@@ -452,6 +513,7 @@ class TapOverrideService : Service() {
             tapCodeDecoder.reset()
             leftClickDetector.cancel()
             mediaDetector.cancel()
+            chordClickDetector.cancel()
         }
 
         if (::sdk.isInitialized) {
@@ -472,23 +534,202 @@ class TapOverrideService : Service() {
         super.onDestroy()
     }
 
+    private fun stateOf(tapIdentifier: String): Int {
+        return tapStates[tapIdentifier] ?: KEYBOARD_STATE
+    }
+
+    private fun surfaceMouseModeActive(tapIdentifier: String): Boolean {
+        return stateOf(tapIdentifier) == MULTIMEDIA_STATE &&
+            isTapCodeEnabled() &&
+            !isTraining() &&
+            CompanionSettings.surfaceMouseModeEnabled(applicationContext)
+    }
+
+    /**
+     * Single source of truth for what raw tap input means right now.
+     */
+    private fun inputRole(tapIdentifier: String): InputRole {
+        val state = stateOf(tapIdentifier)
+        return when {
+            state == AIR_MOUSE_STATE -> InputRole.AIR_MOUSE
+            surfaceMouseModeActive(tapIdentifier) -> InputRole.SURFACE_MOUSE
+            state == MULTIMEDIA_STATE || state == SMART_TV_STATE ->
+                InputRole.STOOD_DOWN
+
+            else -> InputRole.TAP_CODE
+        }
+    }
+
+    /**
+     * Applies the Tap SDK mode implied by state and settings.
+     *
+     * Every caller routes through here so connect, state change, setting
+     * change, and Tap Code toggle cannot issue conflicting requests.
+     */
+    private fun applyDesiredMode(tapIdentifier: String, reason: String) {
+        val role = inputRole(tapIdentifier)
+        val wantsController = when (role) {
+            InputRole.AIR_MOUSE -> true
+            InputRole.SURFACE_MOUSE -> true
+            InputRole.STOOD_DOWN -> false
+            InputRole.TAP_CODE -> decoderActive()
+        }
+
+        if (wantsController) {
+            requestControllerWithMouseHidMode(tapIdentifier, "$reason role=$role")
+        } else {
+            requestTextMode(tapIdentifier, "$reason role=$role")
+        }
+    }
+
+    /**
+     * Handles a keyboard-mode chord that includes the thumb.
+     *
+     * Matching is by finger bitmask rather than exact chord value because
+     * pinching thumb to index frequently co-triggers the middle finger, so the
+     * hardware reports values such as 7 (thumb+index+middle) instead of 3.
+     * Index takes precedence over middle when both are present.
+     */
+    private fun handleThumbChordGesture(code: Int) {
+        val hasIndex = code and TapCodeDecoder.INDEX != 0
+        val hasMiddle = code and TapCodeDecoder.MIDDLE != 0
+        val description = "raw=$code ${fingerNames(code)}"
+
+        when {
+            hasIndex -> {
+                if (
+                    !CompanionSettings.tapCodeThumbIndexClickEnabled(
+                        applicationContext
+                    )
+                ) {
+                    log(
+                        "ACTION skipped: chord Thumb+Index ($description) -> " +
+                            "click disabled in settings"
+                    )
+                    return
+                }
+
+                if (
+                    CompanionSettings.tapCodeChordDoubleTapEnabled(
+                        applicationContext
+                    )
+                ) {
+                    val windowMs = CompanionSettings
+                        .tapCodeChordDoubleTapWindowMs(applicationContext)
+                    log(
+                        "ACTION queued: chord Thumb+Index ($description) -> " +
+                            "click detector (window=${windowMs}ms)"
+                    )
+                    chordClickDetector.onEvent()
+                } else {
+                    chordClickDetector.cancel()
+                    log(
+                        "ACTION immediate: chord Thumb+Index ($description) -> " +
+                            "LEFT click"
+                    )
+                    RootInjector.clickLeft()
+                }
+            }
+
+            hasMiddle -> {
+                if (
+                    !CompanionSettings.tapCodeThumbMiddleMediaEnabled(
+                        applicationContext
+                    )
+                ) {
+                    log(
+                        "ACTION skipped: chord Thumb+Middle ($description) -> " +
+                            "media disabled in settings"
+                    )
+                    return
+                }
+
+                log(
+                    "ACTION immediate: chord Thumb+Middle ($description) -> " +
+                        "MEDIA PLAY/PAUSE"
+                )
+                RootInjector.keyevent(MEDIA_PLAY_PAUSE_KEYCODE)
+            }
+
+            else -> log(
+                "Thumb chord ignored ($description); no index or middle finger"
+            )
+        }
+    }
+
+    /**
+     * Handles a thumbless tap while the optical glider owns the device.
+     *
+     * Text decoding is intentionally skipped here: a bare index tap is the
+     * first symbol of a Tap Code letter, and treating it as one while the user
+     * is pointing produced an 800 ms pending sequence followed by a timeout.
+     */
+    private fun handleSurfaceMouseTap(code: Int) {
+        val description = "raw=$code ${fingerNames(code)}"
+        val idleMs = System.currentTimeMillis() - lastMousePacketMs
+
+        when (code) {
+            TapCodeDecoder.INDEX -> {
+                if (
+                    !CompanionSettings.surfaceMouseIndexClickEnabled(
+                        applicationContext
+                    )
+                ) {
+                    log(
+                        "ACTION skipped: surface-mouse Index ($description) -> " +
+                            "click disabled in settings"
+                    )
+                    return
+                }
+
+                log(
+                    "ACTION immediate: surface-mouse Index ($description) -> " +
+                        "LEFT click (cursor idle ${idleMs}ms)"
+                )
+                RootInjector.clickLeft()
+            }
+
+            TapCodeDecoder.MIDDLE -> {
+                if (
+                    !CompanionSettings.surfaceMouseMiddleRightClickEnabled(
+                        applicationContext
+                    )
+                ) {
+                    log(
+                        "ACTION skipped: surface-mouse Middle ($description) -> " +
+                            "right click disabled in settings"
+                    )
+                    return
+                }
+
+                log(
+                    "ACTION immediate: surface-mouse Middle ($description) -> " +
+                        "RIGHT click (cursor idle ${idleMs}ms)"
+                )
+                RootInjector.clickRight()
+            }
+
+            else -> log(
+                "Surface-mouse tap ignored ($description); " +
+                    "no mapping and text decoding is suspended while pointing"
+            )
+        }
+    }
+
     private fun applyTapCodeEnabled(enabled: Boolean, force: Boolean = false) {
         if (!force && tapCodeEnabledState == enabled) return
 
         tapCodeEnabledState = enabled
         CompanionSettings.setTapCodeEnabled(applicationContext, enabled)
         tapCodeDecoder.reset()
+        chordClickDetector.cancel()
         injectorHandler.removeCallbacks(tapCodeTick)
 
         sdk.getConnectedTaps().forEach { tapIdentifier ->
-            if (enabled || isTraining()) {
-                requestControllerWithMouseHidMode(
-                    tapIdentifier,
-                    if (enabled) "Tap Code enabled" else "native trainer active"
-                )
-            } else {
-                requestTextMode(tapIdentifier, "Tap Code disabled")
-            }
+            applyDesiredMode(
+                tapIdentifier,
+                if (enabled) "Tap Code enabled" else "Tap Code disabled"
+            )
         }
 
         if (decoderActive()) {
@@ -634,7 +875,7 @@ class TapOverrideService : Service() {
         val count = airMouseMotionPacketCount
         airMouseMotionPacketCount = 0
         if (count > 0) {
-            log("AirMouse cursor-motion summary: suppressed=$count packets")
+            log("Cursor-motion summary: suppressed=$count packets")
         }
     }
 
@@ -732,6 +973,7 @@ class TapOverrideService : Service() {
 
     private inner class DoubleTapDetector(
         private val name: String,
+        private val windowProvider: () -> Long,
         private val singleAction: () -> Unit,
         private val doubleAction: () -> Unit
     ) {
@@ -747,9 +989,7 @@ class TapOverrideService : Service() {
                     log("Double-tap detector [$name]: DOUBLE action fired")
                     doubleAction()
                 } else {
-                    val windowMs = CompanionSettings.doubleTapWindowMs(
-                        applicationContext
-                    )
+                    val windowMs = windowProvider()
                     log(
                         "Double-tap detector [$name]: first event pending " +
                             "for ${windowMs}ms"
@@ -802,8 +1042,9 @@ class TapOverrideService : Service() {
             val activeService = instance ?: return
             activeService.injectorHandler.post {
                 activeService.tapCodeDecoder.reset()
+                activeService.chordClickDetector.cancel()
                 activeService.sdk.getConnectedTaps().forEach { tapIdentifier ->
-                    activeService.requestControllerWithMouseHidMode(
+                    activeService.applyDesiredMode(
                         tapIdentifier,
                         "native trainer started"
                     )
@@ -823,17 +1064,10 @@ class TapOverrideService : Service() {
             activeService.injectorHandler.post {
                 activeService.tapCodeDecoder.reset()
                 activeService.sdk.getConnectedTaps().forEach { tapIdentifier ->
-                    if (isTapCodeEnabled()) {
-                        activeService.requestControllerWithMouseHidMode(
-                            tapIdentifier,
-                            "native trainer ended; Tap Code remains enabled"
-                        )
-                    } else {
-                        activeService.requestTextMode(
-                            tapIdentifier,
-                            "native trainer ended"
-                        )
-                    }
+                    activeService.applyDesiredMode(
+                        tapIdentifier,
+                        "native trainer ended"
+                    )
                 }
                 if (activeService.decoderActive()) {
                     activeService.startDecoderTickIfNeeded()
@@ -865,6 +1099,13 @@ class TapOverrideService : Service() {
             activeService.injectorHandler.post {
                 activeService.leftClickDetector.cancel()
                 activeService.mediaDetector.cancel()
+                activeService.chordClickDetector.cancel()
+                // Surface-mouse mode changes which SDK mode the current state
+                // implies, so re-derive it instead of waiting for the next
+                // firmware state change.
+                activeService.sdk.getConnectedTaps().forEach { tapIdentifier ->
+                    activeService.applyDesiredMode(tapIdentifier, "settings changed")
+                }
                 activeService.log(
                     "Companion settings reloaded live; " +
                         "pending double-tap actions canceled"
@@ -881,9 +1122,8 @@ class TapOverrideService : Service() {
         private const val SMART_TV_STATE = 3
         private const val TAP_CODE_TICK_MS = 100L
         private const val RAW_SENSOR_LOG_INTERVAL_MS = 1_000L
+        private const val GLIDE_LOG_INTERVAL_MS = 1_000L
         private const val TAP_CODE_BIT_MASK = 0x1f
-        private const val THUMB_INDEX_CHORD = 3
-        private const val THUMB_MIDDLE_CHORD = 5
         private const val SHORT_DEVICE_ID_LENGTH = 8
         private const val MEDIA_PLAY_PAUSE_KEYCODE = 85
         private const val BACK_KEYCODE = 4

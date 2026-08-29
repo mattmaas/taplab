@@ -378,6 +378,42 @@
 
                 <View style="@style/TapLab.Divider" />
 
+                <View style="@style/TapLab.Divider" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/switch_chord_double_tap"
+                    style="@style/TapLab.Switch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Thumb+Index double tap = right click" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space_xs"
+                    android:text="Off keeps chord clicks instant. On waits for a possible second tap so you also get right click while typing, at the cost of the delay below."
+                    android:textAppearance="@style/TapLab.Text.Helper" />
+
+                <TextView
+                    android:id="@+id/label_chord_double_tap_window"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space_sm"
+                    android:textAppearance="@style/TapLab.Text.Body" />
+
+                <com.google.android.material.slider.Slider
+                    android:id="@+id/slider_chord_double_tap_window"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:stepSize="5"
+                    android:valueFrom="150"
+                    android:valueTo="500" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Independent of the AirMouse double-tap window, and only used while typing."
+                    android:textAppearance="@style/TapLab.Text.Helper" />
                 <com.google.android.material.materialswitch.MaterialSwitch
                     android:id="@+id/switch_chord_media"
                     style="@style/TapLab.Switch"
@@ -387,6 +423,64 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
+        <!-- ============ SURFACE MOUSE ============ -->
+        <com.google.android.material.card.MaterialCardView
+            style="@style/TapLab.Card"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="@dimen/card_padding">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Surface mouse"
+                    android:textAppearance="@style/TapLab.Text.Overline" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space_xs"
+                    android:text="The firmware reports the optical glider as the Multimedia profile. Reclaiming it enables cursor taps, but gives up the native Multimedia media keys while gliding."
+                    android:textAppearance="@style/TapLab.Text.Helper" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/switch_surface_mouse_mode"
+                    style="@style/TapLab.Switch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space_sm"
+                    android:text="Treat Multimedia profile as surface mouse" />
+
+                <View style="@style/TapLab.Divider" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/switch_surface_index_click"
+                    style="@style/TapLab.Switch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Index tap = left click" />
+
+                <com.google.android.material.materialswitch.MaterialSwitch
+                    android:id="@+id/switch_surface_middle_right"
+                    style="@style/TapLab.Switch"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space_sm"
+                    android:text="Middle tap = right click" />
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space_xs"
+                    android:text="Tap Code text is suspended while the glider is in use, so a bare index tap no longer starts a letter and then times out."
+                    android:textAppearance="@style/TapLab.Text.Helper" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
         <!-- ============ CHORD REFERENCE ============ -->
         <com.google.android.material.card.MaterialCardView
             style="@style/TapLab.Card"

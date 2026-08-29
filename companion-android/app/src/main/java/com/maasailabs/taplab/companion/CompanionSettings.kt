@@ -15,6 +15,20 @@ object CompanionSettings {
     const val DEFAULT_TAP_CODE_THUMB_INDEX_CLICK_ENABLED = true
     const val DEFAULT_TAP_CODE_THUMB_MIDDLE_MEDIA_ENABLED = true
 
+    // Keyboard-mode (non-AirMouse) chord gestures use their own double-tap
+    // configuration so cursor-mode tuning cannot change click latency while
+    // typing. Off by default to keep chord clicks immediate.
+    const val DEFAULT_TAP_CODE_CHORD_DOUBLE_TAP_ENABLED = false
+    const val DEFAULT_TAP_CODE_CHORD_DOUBLE_TAP_WINDOW_MS = 275L
+
+    // The Tap Strap 2 firmware reports the optical-glider "surface mouse" as
+    // the MULTIMEDIA profile, the same state used when the profile is selected
+    // as a media remote. Opt in to reclaim it for cursor gestures; off keeps
+    // the firmware's native Multimedia HID controls.
+    const val DEFAULT_SURFACE_MOUSE_MODE_ENABLED = false
+    const val DEFAULT_SURFACE_MOUSE_INDEX_CLICK_ENABLED = true
+    const val DEFAULT_SURFACE_MOUSE_MIDDLE_RIGHT_CLICK_ENABLED = false
+
     fun autoStartOnBootEnabled(context: Context): Boolean {
         return preferences(context).getBoolean(
             KEY_AUTO_START_ON_BOOT_ENABLED,
@@ -154,6 +168,88 @@ object CompanionSettings {
             .apply()
     }
 
+    fun tapCodeChordDoubleTapEnabled(context: Context): Boolean {
+        return preferences(context).getBoolean(
+            KEY_TAP_CODE_CHORD_DOUBLE_TAP_ENABLED,
+            DEFAULT_TAP_CODE_CHORD_DOUBLE_TAP_ENABLED
+        )
+    }
+
+    fun setTapCodeChordDoubleTapEnabled(context: Context, enabled: Boolean) {
+        preferences(context)
+            .edit()
+            .putBoolean(KEY_TAP_CODE_CHORD_DOUBLE_TAP_ENABLED, enabled)
+            .apply()
+    }
+
+    fun tapCodeChordDoubleTapWindowMs(context: Context): Long {
+        val storedValue = preferences(context).getLong(
+            KEY_TAP_CODE_CHORD_DOUBLE_TAP_WINDOW_MS,
+            DEFAULT_TAP_CODE_CHORD_DOUBLE_TAP_WINDOW_MS
+        )
+        return storedValue.coerceIn(
+            MIN_DOUBLE_TAP_WINDOW_MS,
+            MAX_DOUBLE_TAP_WINDOW_MS
+        )
+    }
+
+    fun setTapCodeChordDoubleTapWindowMs(context: Context, windowMs: Long) {
+        preferences(context)
+            .edit()
+            .putLong(
+                KEY_TAP_CODE_CHORD_DOUBLE_TAP_WINDOW_MS,
+                windowMs.coerceIn(
+                    MIN_DOUBLE_TAP_WINDOW_MS,
+                    MAX_DOUBLE_TAP_WINDOW_MS
+                )
+            )
+            .apply()
+    }
+
+    fun surfaceMouseModeEnabled(context: Context): Boolean {
+        return preferences(context).getBoolean(
+            KEY_SURFACE_MOUSE_MODE_ENABLED,
+            DEFAULT_SURFACE_MOUSE_MODE_ENABLED
+        )
+    }
+
+    fun setSurfaceMouseModeEnabled(context: Context, enabled: Boolean) {
+        preferences(context)
+            .edit()
+            .putBoolean(KEY_SURFACE_MOUSE_MODE_ENABLED, enabled)
+            .apply()
+    }
+
+    fun surfaceMouseIndexClickEnabled(context: Context): Boolean {
+        return preferences(context).getBoolean(
+            KEY_SURFACE_MOUSE_INDEX_CLICK_ENABLED,
+            DEFAULT_SURFACE_MOUSE_INDEX_CLICK_ENABLED
+        )
+    }
+
+    fun setSurfaceMouseIndexClickEnabled(context: Context, enabled: Boolean) {
+        preferences(context)
+            .edit()
+            .putBoolean(KEY_SURFACE_MOUSE_INDEX_CLICK_ENABLED, enabled)
+            .apply()
+    }
+
+    fun surfaceMouseMiddleRightClickEnabled(context: Context): Boolean {
+        return preferences(context).getBoolean(
+            KEY_SURFACE_MOUSE_MIDDLE_RIGHT_CLICK_ENABLED,
+            DEFAULT_SURFACE_MOUSE_MIDDLE_RIGHT_CLICK_ENABLED
+        )
+    }
+
+    fun setSurfaceMouseMiddleRightClickEnabled(
+        context: Context,
+        enabled: Boolean
+    ) {
+        preferences(context)
+            .edit()
+            .putBoolean(KEY_SURFACE_MOUSE_MIDDLE_RIGHT_CLICK_ENABLED, enabled)
+            .apply()
+    }
     private fun preferences(context: Context) = context.applicationContext
         .getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
 
@@ -170,4 +266,14 @@ object CompanionSettings {
         "tap_code_thumb_index_click_enabled"
     private const val KEY_TAP_CODE_THUMB_MIDDLE_MEDIA_ENABLED =
         "tap_code_thumb_middle_media_enabled"
+    private const val KEY_TAP_CODE_CHORD_DOUBLE_TAP_ENABLED =
+        "tap_code_chord_double_tap_enabled"
+    private const val KEY_TAP_CODE_CHORD_DOUBLE_TAP_WINDOW_MS =
+        "tap_code_chord_double_tap_window_ms"
+    private const val KEY_SURFACE_MOUSE_MODE_ENABLED =
+        "surface_mouse_mode_enabled"
+    private const val KEY_SURFACE_MOUSE_INDEX_CLICK_ENABLED =
+        "surface_mouse_index_click_enabled"
+    private const val KEY_SURFACE_MOUSE_MIDDLE_RIGHT_CLICK_ENABLED =
+        "surface_mouse_middle_right_click_enabled"
 }

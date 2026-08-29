@@ -115,6 +115,35 @@ AirMouse → Multimedia → Smart TV cycle by default, because overriding it
 conflicts with that cycle. Every mapping and the double-tap window (150–500 ms,
 default 275 ms) is configurable and applies live.
 
+## Clicking without AirMouse
+
+AirMouse gives you a cursor, but the pinch that clicks also nudges the cursor
+off target. So clicks are available in the other two modes too.
+
+**While typing (keyboard mode)**, chords containing the thumb are claimed as
+gestures. Thumb-Free Tap Code never uses the thumb, so this can never collide
+with text:
+
+| Fingers in the chord | Example raw values | Action |
+| --- | --- | --- |
+| Thumb + Index (any extras) | 3, 7, 11, 19 | Left click |
+| Thumb + Middle, no index | 5, 13, 21 | Media play/pause |
+| Thumb alone, or thumb + ring/pinky only | 1, 9, 17, 25 | Ignored |
+
+Matching is by finger bitmask rather than exact chord value, because pinching
+thumb to index routinely co-triggers a neighbouring finger - the hardware
+reports 7 or 11 far more often than a clean 3. An optional right-click double
+tap is available with its own independent timing window.
+
+**While using the optical glider (surface mouse)**, the firmware reports the
+MULTIMEDIA state - the same state used when Multimedia is selected as a media
+remote, so the two are indistinguishable to software. Opting into
+**Treat Multimedia profile as surface mouse** reclaims it for cursor use:
+index tap = left click, optional middle tap = right click, and Tap Code text
+decoding is suspended so a bare index tap no longer starts a letter and then
+times out. The trade-off is losing the native Multimedia media keys while
+gliding, which is why it is off by default.
+
 ## Known limitations
 
 - **AirMouse cannot be forced on.** Physical AirMouse entry is firmware and
@@ -123,6 +152,9 @@ default 275 ms) is configurable and applies live.
   force it.
 - **Typing latency.** Injection goes through `input text`, so expect roughly
   200–300 ms per character.
+- **Native profile cycling cannot be blocked.** A thumb-middle touch can make
+  the firmware jump to Multimedia or Smart TV on its own. The app reports the
+  transition and resumes afterwards, but cannot prevent it.
 - **Stock keystrokes are not logged.** In stock TEXT mode the Tap sends HID
   keyboard output straight to Android with no SDK callback. Capturing those
   would require a keylogger, which this app intentionally does not implement.

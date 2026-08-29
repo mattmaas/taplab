@@ -100,10 +100,12 @@ override service:
   a possible Back double tap. Disabling it makes every thumb-middle tap
   immediately send media play/pause, but sacrifices the thumb-middle Back
   action.
-- **Double-tap window** adjusts both enabled detectors from 150–500 ms. A
-  shorter window reduces single-action latency but makes double taps harder to
-  perform; a longer window makes double taps easier but delays single actions.
-  The default is 275 ms.
+- **Double-tap window** adjusts both enabled AirMouse detectors from
+  150-500 ms. Keyboard-mode chord clicks are unaffected; they have their own
+  window under **Tap Code mode controls**. A shorter window reduces
+  single-action latency but makes double taps harder to perform; a longer
+  window makes double taps easier but delays single actions. The default is
+  275 ms.
 - **Inject two-finger AirMouse scrolling** enables or disables injected
   two-finger scrolling.
 
@@ -114,13 +116,28 @@ normal keyboard mode or Tap Code decoding.
 ## Tap Code mode controls outside AirMouse
 
 Outside AirMouse, finger-to-thumb touch events are not available as distinct
-inputs. While Tap Code typing is enabled, the companion can instead intercept
-these intentionally unused simultaneous surface tap chords:
+inputs. While Tap Code typing is enabled, the companion instead claims chords
+that contain the thumb. Thumb-Free Tap Code never uses the thumb, so a chord
+containing it can never be text and is always safe to reuse as a gesture.
 
-| Simultaneous tap chord | Tapcode | Action |
+Matching is by **finger bitmask, not exact chord value**. Pinching thumb to
+index frequently co-triggers neighbouring fingers, so the hardware commonly
+reports 7 (Thumb+Index+Middle) or 11 (Thumb+Index+Ring) rather than a clean 3.
+Exact-value matching silently failed on those, so the click never fired and the
+chord fell through to the decoder as an invalid-chord error.
+
+| Fingers in the chord | Example raw values | Action |
 | --- | --- | --- |
-| Thumb+Index | 3 | Left click |
-| Thumb+Middle | 5 | Media play/pause |
+| Thumb + Index (any extras) | 3, 7, 11, 19 | Left click |
+| Thumb + Middle, no index | 5, 13, 21 | Media play/pause |
+| Thumb alone, or thumb + ring/pinky only | 1, 9, 17, 25 | Ignored |
+
+Index takes precedence when both index and middle are present, because a chord
+such as 7 is genuinely ambiguous and clicking is the more common intent.
+
+Thumb chords are never passed to the decoder in any mode, including the
+trainer, so an incidental pinch cannot produce a spurious error, an error
+haptic, or a reset training prompt.
 
 Both mappings are enabled by default and can be disabled independently under
 **Tap Code mode controls**. They apply only when Tap Code typing is ON and
@@ -128,6 +145,54 @@ AirMouse is not active. During AirMouse, the existing thumb-touch gesture
 behavior remains in effect. When Tap Code typing is OFF, the companion does not
 intercept these chords because they belong to the stock Tap alphabet; stock
 TEXT-mode keyboard behavior remains untouched.
+
+### Chord double tap
+
+**Thumb+Index double tap = right click** is off by default, which keeps chord
+clicks immediate. Enabling it waits for a possible second tap so right click is
+available while typing, at the cost of delaying every chord click by the window.
+
+This detector has its **own window**, separate from the AirMouse double-tap
+window, so tuning cursor behavior can never change click latency while typing.
+It is adjustable from 150-500 ms and defaults to 275 ms.
+
+## Surface mouse
+
+The Tap Strap 2 firmware does not expose the optical glider as its own state.
+Engaging the glider reports **MULTIMEDIA (rawState=2)** - the same state used
+when Multimedia is selected as a media remote. The companion therefore cannot
+tell the two apart, and by default it stands down for MULTIMEDIA so the
+firmware's native media keys keep working.
+
+**Treat Multimedia profile as surface mouse** (off by default) reclaims that
+state for cursor use. While it is on, Tap Code typing is enabled, and the
+trainer is not running:
+
+| Tap | Action |
+| --- | --- |
+| Index | Left click (on by default) |
+| Middle | Right click (off by default) |
+| Thumb chords | Same click/media mappings as keyboard mode |
+
+Tap Code text decoding is suspended while the glider owns the device. Without
+this, a bare index tap was consumed as the first symbol of a letter, producing
+an 800 ms pending sequence followed by a timeout instead of a click.
+
+The trade-off is explicit: enabling this gives up the native Multimedia HID
+media keys while gliding. Leave it off if you use the Multimedia profile as an
+actual remote.
+
+Two related behaviors were corrected alongside this:
+
+- **Stand-down is now honored.** Previously the log claimed custom injection was
+  suspended for MULTIMEDIA and SMART_TV while the decoder kept consuming input
+  and could still inject text. Raw input is now ignored outright in those
+  states unless surface-mouse mode claims them.
+- **Mode requests are centralized.** Connect and state-change handlers used to
+  issue independent, racing mode requests, so identical sessions could end up in
+  different SDK modes - visible in logs as hundreds of cursor packets in one
+  session and almost none in the next. The requested mode is now derived in one
+  place from the current state plus settings.
 
 ## Native Tap Code trainer
 
@@ -257,19 +322,44 @@ High-value diagnostic lines use mode and source tags:
   callback for those keys. Consequently, `[Regular]` cannot log each stock
   keystroke.
 - `[TapCode]` identifies raw input received while Tap Code decoding is active.
+- `[SurfaceMouse]` identifies optical-glider activity: proximity edges plus a
+  throttled `cursor active` heartbeat, at most one line per second, reporting
+  accumulated packet count, proximity, Tap state, and the resolved input role.
 - `[AirMouse]` identifies discrete AirMouse gesture packets.
 - `[Mode]` identifies Tap state transitions and SDK mode requests.
-- `[SurfaceMouse]` identifies optical-glider proximity changes. These are
-  deliberately edge-triggered; continuous cursor-motion packets remain hidden
-  and are only counted.
+- `[Trainer]` identifies trainer-scoped input handling.
 
-`[SurfaceMouse]` logging is evidence gathering, not a gesture mapping.
-Double-tap the glider twice and inspect the log to determine whether clean
-proximity edges appear. No surface-mouse double-tap action is implemented yet.
+Every raw input line reports the resolved `role=` for that event, which is the
+single value that determines interpretation:
+
+| Role | Meaning |
+| --- | --- |
+| `TAP_CODE` | Decode text; thumb chords act as gestures |
+| `SURFACE_MOUSE` | Cursor gestures only; text decoding suspended |
+| `AIR_MOUSE` | Thumb touches arrive as AirMouse packets instead |
+| `STOOD_DOWN` | A native Multimedia/Smart TV profile owns the device |
+
+Continuous cursor-motion packets are still counted rather than logged
+individually, and flushed as a `Cursor-motion summary` on state change. The
+heartbeat exists because whole minutes of glider use previously left no trace
+at all, which made surface-mouse behavior impossible to diagnose.
 
 ## Troubleshooting
 
 - Tap **Test root access** and confirm that the result includes a root `uid=0`.
+- If a thumb-index pinch does not click, check the raw value in the log. Values
+  such as 7 (Thumb+Index+Middle) and 11 (Thumb+Index+Ring) are expected and are
+  matched by bitmask. A chord reported as bare 1 (Thumb) contains no index bit
+  at all and cannot be distinguished from any other thumb-only contact.
+- If tapping during glider use starts a letter and then times out instead of
+  clicking, enable **Treat Multimedia profile as surface mouse**. Without it the
+  glider state is treated as the native Multimedia profile.
+- If nothing at all appears in the log while the cursor is clearly moving, the
+  Tap is in TEXT mode and the SDK is not forwarding mouse packets. Check the
+  most recent `[Mode] SDK mode requested` line and its `role=`.
+- The firmware can cycle into MULTIMEDIA or SMART_TV on its own from a
+  thumb-middle touch. The companion cannot prevent this; it reports the
+  transition and resumes when the state returns.
 - Check the log for the discovered `/dev/input/eventN` Tap mouse node.
 - A single action is delayed by the configured 150–500 ms window when that
   gesture's double-tap support is enabled. Disable its double-tap setting for
