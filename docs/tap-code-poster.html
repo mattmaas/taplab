@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Thumb-Free Tap Code</title>
+<style>
+  @page { size: letter portrait; margin: 0.35in; }
+
+  :root {
+    --ink: #14181a;
+    --mute: #6b7478;
+    --line: #c6cdd0;
+    --accent: #00806e;
+    --accent-bg: #e2f4f0;
+    --panel: #f4f7f7;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body { margin: 0; padding: 0; }
+
+  body {
+    font-family: "Segoe UI", Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    background: #fff;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  .sheet {
+    width: 7.8in;
+    margin: 0 auto;
+    padding: 0.1in 0 0;
+  }
+
+  /* ---------- header ---------- */
+  header { text-align: center; margin-bottom: 12px; }
+
+  h1 {
+    font-size: 34px;
+    line-height: 1;
+    margin: 0;
+    letter-spacing: 0.02em;
+    font-weight: 800;
+  }
+
+  .sub {
+    font-size: 13px;
+    color: var(--mute);
+    margin-top: 5px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .howto {
+    font-size: 14px;
+    margin-top: 9px;
+    padding: 7px 10px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 7px;
+    display: inline-block;
+  }
+
+  .howto b { color: var(--accent); }
+
+  /* ---------- finger dots ---------- */
+  .dots { display: inline-flex; gap: 3px; align-items: center; }
+
+  .dots i {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    border: 1.3px solid #8d9698;
+    display: block;
+  }
+
+  .dots i.on { background: var(--ink); border-color: var(--ink); }
+
+  /* ---------- legend ---------- */
+  .legend {
+    display: flex;
+    justify-content: center;
+    gap: 14px;
+    margin: 14px 0 12px;
+    padding: 9px 6px;
+    border-top: 1.5px solid var(--ink);
+    border-bottom: 1.5px solid var(--ink);
+  }
+
+  .legend .item { text-align: center; min-width: 92px; }
+  .legend .code { font-size: 19px; font-weight: 800; letter-spacing: 0.04em; }
+  .legend .name { font-size: 10px; color: var(--mute); margin-top: 2px; }
+  .legend .dots { margin-top: 5px; justify-content: center; }
+  .legend .slots { font-size: 8px; color: var(--mute); letter-spacing: 0.22em; margin-top: 3px; }
+
+  /* ---------- grid ---------- */
+  table.grid { width: 100%; border-collapse: collapse; table-layout: fixed; }
+
+  table.grid th, table.grid td {
+    border: 1px solid var(--line);
+    text-align: center;
+    vertical-align: middle;
+  }
+
+  table.grid thead th {
+    height: 54px;
+    background: var(--panel);
+    font-size: 17px;
+    font-weight: 800;
+  }
+
+  table.grid thead th .dots { justify-content: center; margin-top: 4px; }
+
+  table.grid tbody th {
+    width: 78px;
+    background: var(--panel);
+    font-size: 17px;
+    font-weight: 800;
+  }
+
+  table.grid tbody th .dots { justify-content: center; margin-top: 4px; }
+
+  table.grid td {
+    height: 66px;
+    font-size: 34px;
+    font-weight: 700;
+    text-transform: lowercase;
+  }
+
+
+
+  .corner {
+    background: #fff !important;
+    font-size: 10px !important;
+    font-weight: 600 !important;
+    color: var(--mute);
+    line-height: 1.5;
+  }
+
+  .anchor-note {
+    font-size: 11px;
+    color: var(--accent);
+    margin-top: 6px;
+    text-align: right;
+    font-weight: 600;
+  }
+
+  /* ---------- lower panels ---------- */
+  .panels { display: flex; gap: 12px; margin-top: 13px; }
+
+  .panel {
+    flex: 1;
+    border: 1.5px solid var(--ink);
+    border-radius: 8px;
+    padding: 9px 11px;
+  }
+
+  .panel h2 {
+    font-size: 11px;
+    margin: 0 0 7px;
+    text-transform: uppercase;
+    letter-spacing: 0.13em;
+    color: var(--accent);
+  }
+
+  .rows { width: 100%; border-collapse: collapse; }
+
+  .rows td {
+    font-size: 12.5px;
+    padding: 3.5px 0;
+    border-bottom: 1px dotted var(--line);
+  }
+
+  .rows tr:last-child td { border-bottom: none; }
+
+  .rows td.seq { font-weight: 800; white-space: nowrap; padding-right: 9px; width: 104px; }
+
+  .rows td.act { color: #303a3d; }
+
+  /* ---------- examples ---------- */
+  .examples {
+    display: flex;
+    justify-content: center;
+    gap: 26px;
+    margin-top: 13px;
+    padding: 9px 0;
+    background: var(--panel);
+    border-radius: 8px;
+  }
+
+  .ex { font-size: 14px; font-weight: 700; }
+  .ex span { color: var(--mute); font-weight: 600; }
+  .ex b { color: var(--accent); font-size: 18px; }
+
+  footer {
+    margin-top: 11px;
+    text-align: center;
+    font-size: 9.5px;
+    color: var(--mute);
+    letter-spacing: 0.05em;
+  }
+</style>
+</head>
+<body>
+<div class="sheet">
+
+  <header>
+    <h1>THUMB-FREE TAP CODE</h1>
+    <div class="sub">Two chords per letter &nbsp;|&nbsp; Tap Strap 2</div>
+    <div class="howto">
+      Tap the <b>row</b> symbol, then the <b>column</b> symbol. The thumb is never used.
+    </div>
+  </header>
+
+  <div class="legend">
+    <div class="item">
+      <div class="code">I</div>
+      <div class="name">INDEX</div>
+      <div class="dots"><i class="on"></i><i></i><i></i><i></i></div>
+      <div class="slots">I M R P</div>
+    </div>
+    <div class="item">
+      <div class="code">M</div>
+      <div class="name">MIDDLE</div>
+      <div class="dots"><i></i><i class="on"></i><i></i><i></i></div>
+      <div class="slots">I M R P</div>
+    </div>
+    <div class="item">
+      <div class="code">R</div>
+      <div class="name">RING</div>
+      <div class="dots"><i></i><i></i><i class="on"></i><i></i></div>
+      <div class="slots">I M R P</div>
+    </div>
+    <div class="item">
+      <div class="code">P</div>
+      <div class="name">PINKY</div>
+      <div class="dots"><i></i><i></i><i></i><i class="on"></i></div>
+      <div class="slots">I M R P</div>
+    </div>
+    <div class="item">
+      <div class="code">RP</div>
+      <div class="name">RING + PINKY</div>
+      <div class="dots"><i></i><i></i><i class="on"></i><i class="on"></i></div>
+      <div class="slots">I M R P</div>
+    </div>
+  </div>
+
+  <table class="grid">
+    <thead>
+      <tr>
+        <th class="corner">1st chord&nbsp;&darr;<br>2nd chord&nbsp;&rarr;</th>
+        <th>I<div class="dots"><i class="on"></i><i></i><i></i><i></i></div></th>
+        <th>M<div class="dots"><i></i><i class="on"></i><i></i><i></i></div></th>
+        <th>R<div class="dots"><i></i><i></i><i class="on"></i><i></i></div></th>
+        <th>P<div class="dots"><i></i><i></i><i></i><i class="on"></i></div></th>
+        <th>RP<div class="dots"><i></i><i></i><i class="on"></i><i class="on"></i></div></th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <th>I<div class="dots"><i class="on"></i><i></i><i></i><i></i></div></th>
+        <td>a</td><td>b</td><td>c</td><td>d</td><td>e</td>
+      </tr>
+      <tr>
+        <th>M<div class="dots"><i></i><i class="on"></i><i></i><i></i></div></th>
+        <td>f</td><td>g</td><td>h</td><td>i</td><td>j</td>
+      </tr>
+      <tr>
+        <th>R<div class="dots"><i></i><i></i><i class="on"></i><i></i></div></th>
+        <td>k</td><td>l</td><td>m</td><td>n</td><td>o</td>
+      </tr>
+      <tr>
+        <th>P<div class="dots"><i></i><i></i><i></i><i class="on"></i></div></th>
+        <td>p</td><td>q</td><td>r</td><td>s</td><td>t</td>
+      </tr>
+      <tr>
+        <th>RP<div class="dots"><i></i><i></i><i class="on"></i><i class="on"></i></div></th>
+        <td>u</td><td>v</td><td>w</td><td>x</td><td>y</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="anchor-note">Same symbol twice: a g m s y &mdash; the easiest five to learn first</div>
+
+  <div class="panels">
+    <div class="panel">
+      <h2>Controls</h2>
+      <table class="rows">
+        <tr><td class="seq">I + M</td><td class="act">Space (or cancel)</td></tr>
+        <tr><td class="seq">M+R then I</td><td class="act">z</td></tr>
+        <tr><td class="seq">M+R then M</td><td class="act">Backspace</td></tr>
+        <tr><td class="seq">M+R then R</td><td class="act">Enter</td></tr>
+        <tr><td class="seq">M+R then P</td><td class="act">Period .</td></tr>
+        <tr><td class="seq">M+R then RP</td><td class="act">Comma ,</td></tr>
+        <tr><td class="seq">M+R then M+R</td><td class="act">Tap Code off</td></tr>
+      </table>
+    </div>
+
+    <div class="panel">
+      <h2>Thumb = pointer, not letters</h2>
+      <table class="rows">
+        <tr><td class="seq">Thumb + Index</td><td class="act">Left click &mdash; typing</td></tr>
+        <tr><td class="seq">Thumb + Middle</td><td class="act">Play / pause &mdash; typing</td></tr>
+        <tr><td class="seq">Index alone</td><td class="act">Left click &mdash; gliding</td></tr>
+        <tr><td class="seq">Middle alone</td><td class="act">Right click &mdash; gliding</td></tr>
+        <tr><td class="seq">2-finger swipe</td><td class="act">Scroll &mdash; AirMouse</td></tr>
+        <tr><td class="seq">&nbsp;</td><td class="act">&nbsp;</td></tr>
+        <tr><td class="seq">&nbsp;</td><td class="act">&nbsp;</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="examples">
+    <div class="ex"><span>I then I =</span> <b>a</b></div>
+    <div class="ex"><span>M then I =</span> <b>f</b></div>
+    <div class="ex"><span>R then P =</span> <b>n</b></div>
+    <div class="ex"><span>RP then M =</span> <b>v</b></div>
+    <div class="ex"><span>I + M =</span> <b>space</b></div>
+  </div>
+
+  <footer>
+    Row then column. 25 letters in the grid; z lives on the control plane.
+    &nbsp;|&nbsp; TapLab Companion
+  </footer>
+
+</div>
+</body>
+</html>

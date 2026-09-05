@@ -7,6 +7,13 @@ Tap's stock typing with a high-accuracy chord system and fixes its AirMouse
 gesture handling. A companion web dashboard for telemetry and remapping is also
 included.
 
+- **Get it:** prebuilt APKs are attached to [GitHub Releases](../../releases); or build from
+  source below.
+- **Learn the chords:** print the one-page [Thumb-Free Tap Code poster](docs/tap-code-poster.html)
+  (open in a browser → Print → Letter).
+- **Docs:** [companion app details](companion-android/README.md) ·
+  [releasing](docs/RELEASING.md) · [recording the demo](docs/DEMO-RECORDING.md)
+
 ---
 
 # TapLab Companion (Android)
