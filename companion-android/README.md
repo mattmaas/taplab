@@ -380,6 +380,13 @@ at all, which made surface-mouse behavior impossible to diagnose.
 - Do not expect the companion to force Tap Strap 2 into physical AirMouse mode.
   The official Android SDK exposes the XR state command only for TapXR devices.
 
+## Known limitations
+
+- The Tap SDK exposes no command that disables the strap's stock HID keyboard
+  outright. While Tap Code is ON, TapLab Companion therefore never requests
+  TEXT mode; it re-asserts controller mode (`0x3 0xC 0x0 0x1`) every 3 s so a
+  firmware revert to KEYBOARD cannot leave the stock keyboard armed.
+
 ## Persistent log
 
 The most recent 500 diagnostic lines, up to approximately 64 KiB, are stored in app-private internal storage. The log survives Tap disconnects, app and service restarts, device restarts, and Android reboots. **Clear log** is the only action that clears it.
