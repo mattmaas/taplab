@@ -34,6 +34,13 @@ class TapOverrideService : Service() {
     // both derive from this, so the two can never disagree.
     private val tapStates = ConcurrentHashMap<String, Int>()
 
+    /** Wall-clock time of the last firmware return to KEYBOARD, 0 if none. */
+    @Volatile
+    private var lastKeyboardRevertMs = 0L
+
+    /** Role last written by the 3 s assertion, per device. */
+    private val lastAssertedRoles = ConcurrentHashMap<String, InputRole>()
+
     /** What the current Tap state and settings say raw tap input means. */
     private enum class InputRole {
         /** Decode Tap Code text. */
@@ -58,6 +65,17 @@ class TapOverrideService : Service() {
             if (!decoderActive()) return
             tapCodeDecoder.tick(System.currentTimeMillis())
             injectorHandler.postDelayed(this, TAP_CODE_TICK_MS)
+        }
+    }
+
+    private val modeAssertTick = object : Runnable {
+        override fun run() {
+            if (!decoderActive()) {
+                lastAssertedRoles.clear()
+                return
+            }
+            assertDesiredModes()
+            injectorHandler.postDelayed(this, MODE_ASSERT_INTERVAL_MS)
         }
     }
 
@@ -133,12 +151,15 @@ class TapOverrideService : Service() {
             // Single decision point. Previously this method issued its own
             // unconditional controller-mode request that raced the state
             // handler, so identical sessions could end up in different modes.
-            applyDesiredMode(tapIdentifier, "connected")
+            injectorHandler.post {
+                applyDesiredMode(tapIdentifier, "connected")
+            }
         }
 
         override fun onTapDisconnected(tapIdentifier: String) {
             lastMouseProximity = null
             tapStates.remove(tapIdentifier)
+            lastAssertedRoles.remove(tapIdentifier)
             log("Tap disconnected: $tapIdentifier")
         }
 
@@ -188,6 +209,24 @@ class TapOverrideService : Service() {
                         "native ${tapStateName(stateOf(tapIdentifier))} profile active"
                 )
                 return
+            }
+
+            // The strap can revert to KEYBOARD on its own after a profile
+            // cycle. Re-assert controller mode before this chord is judged so
+            // the stock HID keyboard cannot emit a letter alongside it.
+            if (
+                lastKeyboardRevertMs != 0L &&
+                System.currentTimeMillis() - lastKeyboardRevertMs <=
+                KEYBOARD_REVERT_WINDOW_MS
+            ) {
+                lastKeyboardRevertMs = 0L
+                log("[Mode] re-asserted controller after firmware state change")
+                injectorHandler.post {
+                    applyDesiredMode(
+                        tapIdentifier,
+                        "firmware state change re-assert"
+                    )
+                }
             }
 
             // Thumb-Free Tap Code never uses the thumb, so any chord containing
@@ -373,8 +412,19 @@ class TapOverrideService : Service() {
 
         override fun onTapChangedState(tapIdentifier: String, state: Int) {
             val stateName = tapStateName(state)
+            val previousState = tapStates.put(tapIdentifier, state)
+            if (
+                state == KEYBOARD_STATE &&
+                previousState != null &&
+                previousState != KEYBOARD_STATE
+            ) {
+                lastKeyboardRevertMs = System.currentTimeMillis()
+                log(
+                    "[Mode] Firmware returned to KEYBOARD from " +
+                        tapStateName(previousState)
+                )
+            }
             lastMouseProximity = null
-            tapStates[tapIdentifier] = state
             log(
                 "[Mode] Tap state changed: device=${shortDeviceId(tapIdentifier)} " +
                     "rawState=$state state=$stateName"
@@ -391,7 +441,9 @@ class TapOverrideService : Service() {
             chordClickDetector.cancel()
 
             val role = inputRole(tapIdentifier)
-            applyDesiredMode(tapIdentifier, "state $stateName")
+            injectorHandler.post {
+                applyDesiredMode(tapIdentifier, "state $stateName")
+            }
 
             when (role) {
                 InputRole.SURFACE_MOUSE -> log(
@@ -457,23 +509,25 @@ class TapOverrideService : Service() {
         }
 
         sdk = TapSdkFactory.getDefault(applicationContext)
-        sdk.setDefaultMode(TapInputMode.text(), true)
+        // Never arm the stock HID keyboard on service start or restart. The
+        // Tap SDK re-writes the registered mode every 10 s, so a TEXT default
+        // would keep stock letters alive while the decoder also types.
+        sdk.setDefaultMode(TapInputMode.controller(), true)
         sdk.registerTapListener(tapListener)
         sdk.resume()
 
-        if (decoderActive()) {
-            injectorHandler.post {
-                if (isTapCodeEnabled()) {
-                    applyTapCodeEnabled(true, force = true)
-                } else {
-                    sdk.getConnectedTaps().forEach { tapIdentifier ->
-                        applyDesiredMode(
-                            tapIdentifier,
-                            "native trainer active at service start"
-                        )
-                    }
-                    startDecoderTickIfNeeded()
+        // Reconcile every connected Tap with the role it should be in. The SDK
+        // default above is CONTROLLER; without this pass a service restart
+        // while Tap Code is OFF would leave an already-connected Tap in
+        // controller mode with neither stock typing nor decoding working.
+        injectorHandler.post {
+            if (isTapCodeEnabled()) {
+                applyTapCodeEnabled(true, force = true)
+            } else {
+                sdk.getConnectedTaps().forEach { tapIdentifier ->
+                    applyDesiredMode(tapIdentifier, "service start")
                 }
+                startDecoderTickIfNeeded()
             }
         }
         log("Override service started")
@@ -510,6 +564,7 @@ class TapOverrideService : Service() {
 
         if (::injectorHandler.isInitialized) {
             injectorHandler.removeCallbacks(tapCodeTick)
+            injectorHandler.removeCallbacks(modeAssertTick)
             tapCodeDecoder.reset()
             leftClickDetector.cancel()
             mediaDetector.cancel()
@@ -568,17 +623,29 @@ class TapOverrideService : Service() {
      */
     private fun applyDesiredMode(tapIdentifier: String, reason: String) {
         val role = inputRole(tapIdentifier)
-        val wantsController = when (role) {
-            InputRole.AIR_MOUSE -> true
-            InputRole.SURFACE_MOUSE -> true
-            InputRole.STOOD_DOWN -> false
-            InputRole.TAP_CODE -> decoderActive()
-        }
+        val fullReason = "$reason role=$role"
 
-        if (wantsController) {
-            requestControllerWithMouseHidMode(tapIdentifier, "$reason role=$role")
-        } else {
-            requestTextMode(tapIdentifier, "$reason role=$role")
+        when (role) {
+            InputRole.TAP_CODE -> if (decoderActive()) {
+                requestControllerMode(tapIdentifier, fullReason)
+            } else {
+                requestTextMode(tapIdentifier, fullReason)
+            }
+
+            InputRole.AIR_MOUSE ->
+                requestControllerWithMouseHidMode(tapIdentifier, fullReason)
+
+            InputRole.SURFACE_MOUSE ->
+                requestControllerWithMouseHidMode(tapIdentifier, fullReason)
+
+            InputRole.STOOD_DOWN -> if (decoderActive()) {
+                // A native profile owns the device, but the SDK's 10 s loop
+                // would re-arm TEXT if it were ever stored. Keep controller
+                // mode and let onTapInputReceived discard the input instead.
+                requestControllerMode(tapIdentifier, fullReason)
+            } else {
+                requestTextMode(tapIdentifier, fullReason)
+            }
         }
     }
 
@@ -724,6 +791,8 @@ class TapOverrideService : Service() {
         tapCodeDecoder.reset()
         chordClickDetector.cancel()
         injectorHandler.removeCallbacks(tapCodeTick)
+        injectorHandler.removeCallbacks(modeAssertTick)
+        lastAssertedRoles.clear()
 
         sdk.getConnectedTaps().forEach { tapIdentifier ->
             applyDesiredMode(
@@ -815,10 +884,42 @@ class TapOverrideService : Service() {
         return isTapCodeEnabled() || isTraining()
     }
 
+    /**
+     * Re-writes the controller mode the current role requires.
+     *
+     * The SDK's own 10 s raw-mode loop can keep a stale mode alive and the
+     * firmware can self-revert to KEYBOARD after a profile cycle, so a 3 s
+     * assertion is what actually keeps the HID keyboard off. It only logs when
+     * the desired role changes, to avoid flooding the persistent log.
+     */
+    private fun assertDesiredModes() {
+        for (tapIdentifier in sdk.getConnectedTaps()) {
+            val role = inputRole(tapIdentifier)
+            val changed = lastAssertedRoles.put(tapIdentifier, role) != role
+            when (role) {
+                InputRole.AIR_MOUSE, InputRole.SURFACE_MOUSE ->
+                    requestControllerWithMouseHidMode(
+                        tapIdentifier,
+                        "3s mode assertion",
+                        logWrite = changed
+                    )
+
+                else -> requestControllerMode(
+                    tapIdentifier,
+                    "3s mode assertion",
+                    logWrite = changed
+                )
+            }
+        }
+    }
+
     private fun startDecoderTickIfNeeded() {
         injectorHandler.removeCallbacks(tapCodeTick)
+        injectorHandler.removeCallbacks(modeAssertTick)
+        lastAssertedRoles.clear()
         if (decoderActive()) {
             injectorHandler.post(tapCodeTick)
+            injectorHandler.post(modeAssertTick)
         }
     }
 
@@ -849,8 +950,8 @@ class TapOverrideService : Service() {
 
     private fun requestTextMode(tapIdentifier: String, reason: String) {
         log(
-            "[Mode] SDK mode requested: device=${shortDeviceId(tapIdentifier)} " +
-                "mode=TEXT reason=$reason"
+            "[Mode] write dev=${shortDeviceId(tapIdentifier)} " +
+                "bytes=03 0C 00 00 mode=TEXT reason=$reason"
         )
         sdk.startTextMode(tapIdentifier)
         log(
@@ -859,14 +960,32 @@ class TapOverrideService : Service() {
         )
     }
 
+    private fun requestControllerMode(
+        tapIdentifier: String,
+        reason: String,
+        logWrite: Boolean = true
+    ) {
+        if (logWrite) {
+            log(
+                "[Mode] write dev=${shortDeviceId(tapIdentifier)} " +
+                    "bytes=03 0C 00 01 mode=CONTROLLER reason=$reason"
+            )
+        }
+        sdk.startControllerMode(tapIdentifier)
+    }
+
     private fun requestControllerWithMouseHidMode(
         tapIdentifier: String,
-        reason: String
+        reason: String,
+        logWrite: Boolean = true
     ) {
-        log(
-            "[Mode] SDK mode requested: device=${shortDeviceId(tapIdentifier)} " +
-                "mode=CONTROLLER_WITH_MOUSE_HID reason=$reason"
-        )
+        if (logWrite) {
+            log(
+                "[Mode] write dev=${shortDeviceId(tapIdentifier)} " +
+                    "bytes=03 0C 00 04 mode=CONTROLLER_WITH_MOUSE_HID " +
+                    "reason=$reason"
+            )
+        }
         sdk.startControllerWithMouseHIDMode(tapIdentifier)
     }
 
@@ -1075,6 +1194,9 @@ class TapOverrideService : Service() {
                     activeService.injectorHandler.removeCallbacks(
                         activeService.tapCodeTick
                     )
+                    activeService.injectorHandler.removeCallbacks(
+                        activeService.modeAssertTick
+                    )
                 }
                 activeService.log(
                     "[Trainer] Native training stopped; previous Tap mode restored"
@@ -1121,6 +1243,8 @@ class TapOverrideService : Service() {
         private const val MULTIMEDIA_STATE = 2
         private const val SMART_TV_STATE = 3
         private const val TAP_CODE_TICK_MS = 100L
+        private const val MODE_ASSERT_INTERVAL_MS = 3_000L
+        private const val KEYBOARD_REVERT_WINDOW_MS = 2_000L
         private const val RAW_SENSOR_LOG_INTERVAL_MS = 1_000L
         private const val GLIDE_LOG_INTERVAL_MS = 1_000L
         private const val TAP_CODE_BIT_MASK = 0x1f
